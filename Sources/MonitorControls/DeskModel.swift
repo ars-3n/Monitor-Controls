@@ -10,6 +10,7 @@ import ServiceManagement
 final class DeskModel {
     let audio: AudioController
     let display: DisplayController
+    let updates = UpdateModel()
     private let defaults: UserDefaults
     @ObservationIgnored private let media = MediaKeys()
     @ObservationIgnored private var placements: [DisplayPlacement]?

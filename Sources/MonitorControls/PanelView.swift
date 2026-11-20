@@ -9,45 +9,64 @@ struct PanelView: View {
     let openSettings: (SettingsDestination) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Monitor Controls")
-                    .font(DeskType.title)
+                    .font(DeskType.heading)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button {
                     openSettings(.settings)
                 } label: {
-                    Label("Settings…", systemImage: "gearshape")
-                        .font(DeskType.control)
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 20, height: 20)
                 }
-                .controlSize(.regular)
-                .font(DeskType.control)
+                .buttonBorderShape(.circle)
                 .deskGlassButton()
+                .accessibilityLabel("Settings…")
+                .help("Settings…")
                 .keyboardShortcut(",", modifiers: .command)
             }
-            .padding(.bottom, 16)
 
             DisplaySection(controller: model.display)
-
-            VStack(alignment: .leading, spacing: 14) {
-                AudioChannel(model: model, input: false, openSettings: openSettings)
-                Divider().padding(.leading, 52)
-                AudioChannel(model: model, input: true, openSettings: openSettings)
-            }
-            .padding(.top, 18)
+            Divider().padding(.leading, PanelMetrics.textInset)
+            AudioChannel(model: model, input: false, openSettings: openSettings)
+            Divider().padding(.leading, PanelMetrics.textInset)
+            AudioChannel(model: model, input: true, openSettings: openSettings)
 
             if let message = model.statusMessage {
                 Label(message, systemImage: "exclamationmark.circle")
                     .font(DeskType.body)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                    .padding(.top, 14)
             }
         }
-        .padding(20)
-        .frame(width: 380)
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 18)
+        .frame(width: 360)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Every row has the same two columns: a symbol, then its text and slider.
+private enum PanelMetrics {
+    static let symbolColumn: CGFloat = 40
+    static let columnSpacing: CGFloat = 12
+    static let textInset = symbolColumn + columnSpacing
+}
+
+/// A symbol that only labels its row. Buttons in the same column use glass.
+private struct RowSymbol: View {
+    let name: String
+
+    var body: some View {
+        Image(systemName: name)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: PanelMetrics.symbolColumn, height: 28)
+            .accessibilityHidden(true)
     }
 }
 
@@ -59,28 +78,28 @@ private struct DisplaySection: View {
         let displays = controller.displays
         Group {
             if displays.isEmpty {
-                HStack(spacing: 14) {
-                    MonitorGlyph(brightness: nil)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Display brightness").font(DeskType.device)
+                HStack(spacing: PanelMetrics.columnSpacing) {
+                    RowSymbol(name: "display")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Brightness")
+                            .font(DeskType.body.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .accessibilityAddTraits(.isHeader)
                         Text(controller.isRefreshing ? "Looking for displays…" : "Connect an external display to adjust its brightness.")
                             .font(DeskType.body)
-                            .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(14)
             } else if displays.count > 2 {
                 ScrollView {
                     displayRows(displays)
                 }
-                .frame(height: 204)
+                .frame(height: 200)
             } else {
                 displayRows(displays)
             }
         }
-        .background(.quaternary.opacity(0.52), in: RoundedRectangle(cornerRadius: 16))
         .onChange(of: displays.map(DisplayIdentity.init), initial: true) {
             labels = displayLabels(for: controller.displays)
         }
@@ -104,15 +123,18 @@ private struct DisplaySection: View {
     }
 
     private func displayRows(_ displays: [MonitorDisplay]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 14) {
             ForEach(displays) { display in
                 if display.id != displays.first?.id {
-                    Divider().padding(.leading, 93)
+                    Divider().padding(.leading, PanelMetrics.textInset)
                 }
                 let name = labels[display.id] ?? display.name
-                HStack(spacing: 14) {
-                    MonitorGlyph(brightness: display.brightness)
-                    VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .center, spacing: PanelMetrics.columnSpacing) {
+                    RowSymbol(name: "sun.max.fill")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Brightness")
+                            .font(DeskType.body.weight(.medium))
+                            .foregroundStyle(.secondary)
                         Text(name)
                             .font(DeskType.device)
                             .lineLimit(1)
@@ -120,20 +142,16 @@ private struct DisplaySection: View {
                             .help(name)
                             .accessibilityAddTraits(.isHeader)
                         if let value = display.brightness {
-                            HStack {
-                                Text("Brightness")
-                                    .font(DeskType.body)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
+                            HStack(spacing: 12) {
+                                NativeLevel(value: value, title: "Brightness for " + name) { newValue in
+                                    guard controller.displays.contains(where: {
+                                        $0.id == display.id && $0.screenID == display.screenID && $0.brightness != nil
+                                    }) else { return }
+                                    controller.setBrightness(newValue, for: display.id)
+                                }
+                                .id(display.screenID)
                                 LevelReadout(value: value)
                             }
-                            NativeLevel(value: value, title: "Brightness for " + name) { newValue in
-                                guard controller.displays.contains(where: {
-                                    $0.id == display.id && $0.screenID == display.screenID && $0.brightness != nil
-                                }) else { return }
-                                controller.setBrightness(newValue, for: display.id)
-                            }
-                            .id(display.screenID)
                         } else {
                             Text(controller.isRefreshing ? "Reading brightness…" : "Brightness unavailable")
                                 .font(DeskType.body)
@@ -142,8 +160,6 @@ private struct DisplaySection: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
             }
         }
     }
@@ -165,7 +181,7 @@ private struct AudioChannel: View {
         let needsPairing = !input && active?.isDisplay == true
             && ((level == nil && model.display.displays.contains { $0.volume != nil })
                 || (muted == nil && model.display.displays.contains { $0.muted != nil }))
-        return HStack(alignment: .center, spacing: 12) {
+        return HStack(alignment: .center, spacing: PanelMetrics.columnSpacing) {
             MuteControl(input: input, muted: muteTarget == nil ? nil : muted) {
                 guard let muteTarget, muteTarget == target(input: input, forMute: true),
                       let current = input ? audio.inputMuted : model.outputMuted else { return }
@@ -272,15 +288,22 @@ private struct RoutePicker: View {
                 .labelsHidden()
                 .font(DeskType.body)
             } label: {
-                Text(selectedName)
-                    .font(DeskType.device)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                HStack(spacing: 5) {
+                    Text(selectedName)
+                        .font(DeskType.device)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
             }
-            .font(DeskType.device)
-            .controlSize(.regular)
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.visible)
+            // A plain label starts at the same edge as the text above it.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(title)
             .accessibilityValue(selectedName)
@@ -315,7 +338,7 @@ private struct MuteControl: View {
                     .accessibilityHidden(true)
             }
         }
-        .frame(width: 40)
+        .frame(width: PanelMetrics.symbolColumn)
     }
 }
 
@@ -341,45 +364,6 @@ private struct LevelReadout: View {
             .font(DeskType.control.monospacedDigit())
             .frame(minWidth: 35, alignment: .trailing)
             .accessibilityHidden(true)
-    }
-}
-
-/// A live brightness swatch drawn inside a monitor silhouette. The slider and number
-/// carry the same information when the swatch or its colors are hard to see.
-private struct MonitorGlyph: View {
-    let brightness: Double?
-
-    var body: some View {
-        Canvas { context, _ in
-            let face = Path(roundedRect: CGRect(x: 1, y: 2, width: 62, height: 39), cornerRadius: 5)
-            let screen = CGRect(x: 3.5, y: 4.5, width: 57, height: 34)
-            let stand = Path(roundedRect: CGRect(x: 28.5, y: 39, width: 7, height: 9), cornerRadius: 1.5)
-            let foot = Path(roundedRect: CGRect(x: 20, y: 47, width: 24, height: 2.5), cornerRadius: 1.25)
-            context.fill(stand, with: .color(.secondary))
-            context.fill(foot, with: .color(.secondary))
-            context.fill(face, with: .color(Color(white: 0.20)))
-            var glass = context
-            glass.clip(to: Path(roundedRect: screen, cornerRadius: 3))
-            glass.fill(Path(screen), with: .color(Color(white: 0.16)))
-            if let brightness {
-                // A dark-to-light sweep stays recognizable from minimum to maximum brightness.
-                let luminance = min(1, max(0, brightness))
-                glass.opacity = 0.25 + 0.75 * luminance
-                glass.fill(Path(screen), with: .linearGradient(
-                    Gradient(colors: [Color(red: 0.05, green: 0.27, blue: 0.32),
-                                      Color(red: 0.43, green: 0.85, blue: 0.73)]),
-                    startPoint: CGPoint(x: 5, y: 29), endPoint: CGPoint(x: 58, y: 10)
-                ))
-                var ridge = Path()
-                ridge.move(to: CGPoint(x: 2, y: 39))
-                ridge.addQuadCurve(to: CGPoint(x: 62, y: 6), control: CGPoint(x: 32, y: 42))
-                ridge.addLine(to: CGPoint(x: 62, y: 40))
-                ridge.closeSubpath()
-                glass.fill(ridge, with: .color(.white.opacity(0.34)))
-            }
-        }
-        .frame(width: 64, height: 52)
-        .accessibilityHidden(true)
     }
 }
 

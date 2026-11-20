@@ -11,16 +11,27 @@ struct SettingsView: View {
     @State private var importResult: String?
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-                .zIndex(1)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(sectionTitle)
-                    .font(DeskType.title)
-                    .accessibilityAddTraits(.isHeader)
-                    .padding(.leading, 22)
-                    .padding(.top, 18)
-                    .padding(.bottom, 4)
+        // The system split view supplies the sidebar, its material and the
+        // title bar on every macOS version.
+        NavigationSplitView(columnVisibility: .constant(.all)) {
+            List(selection: Binding<SettingsSection?>(
+                get: { navigation.section },
+                set: { if let section = $0 { navigation.section = section } }
+            )) {
+                Label("General", systemImage: "gearshape")
+                    .tag(SettingsSection.general)
+                Section("Device priority") {
+                    Label("Outputs", systemImage: "speaker.wave.2")
+                        .tag(SettingsSection.outputs)
+                    Label("Microphones", systemImage: "mic")
+                        .tag(SettingsSection.microphones)
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 230)
+            .toolbar(removing: .sidebarToggle)
+            .accessibilityLabel("Settings sections")
+        } detail: {
+            Group {
                 switch navigation.section {
                 case .general:
                     GeneralSettings(model: model, navigation: navigation)
@@ -31,7 +42,7 @@ struct SettingsView: View {
                                      requestImport: { confirmImport = true })
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .navigationTitle(sectionTitle)
         }
         .sheet(isPresented: $confirmImport) {
             VStack(alignment: .leading, spacing: 14) {
@@ -62,62 +73,11 @@ struct SettingsView: View {
         }
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Settings")
-                .font(DeskType.heading)
-                .padding(.leading, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 8)
-            List(selection: Binding<SettingsSection?>(
-                get: { navigation.section },
-                set: { if let section = $0 { navigation.section = section } }
-            )) {
-                Label("General", systemImage: "gearshape")
-                    .font(DeskType.control)
-                    .tag(SettingsSection.general)
-                Section {
-                    Label("Outputs", systemImage: "speaker.wave.2")
-                        .font(DeskType.control)
-                        .tag(SettingsSection.outputs)
-                    Label("Microphones", systemImage: "mic")
-                        .font(DeskType.control)
-                        .tag(SettingsSection.microphones)
-                } header: {
-                    Text("Device priority")
-                        .font(DeskType.body.weight(.medium))
-                        .foregroundStyle(.primary)
-                }
-                .collapsible(false)
-            }
-            .environment(\.defaultMinListRowHeight, 30)
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .accessibilityLabel("Settings sections")
-        }
-        .frame(width: 162)
-        .modifier(SidebarSurface())
-        .padding(.leading, 10)
-        .padding(.trailing, 6)
-        .padding(.vertical, 8)
-    }
-
     private var sectionTitle: String {
         switch navigation.section {
         case .general: "General"
         case .outputs: "Outputs"
         case .microphones: "Microphones"
-        }
-    }
-}
-
-private struct SidebarSurface: ViewModifier {
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        if #available(macOS 26, *) {
-            content.glassEffect(.regular, in: shape)
-        } else {
-            content.background(.regularMaterial, in: shape)
         }
     }
 }
@@ -164,7 +124,7 @@ private struct GeneralSettings: View {
                     Text("Brightness keys adjust the display under the pointer. Volume and mute follow the active output.")
                         .font(DeskType.body)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .settingsFooter()
                 }
 
                 if let output = model.audio.output, output.isDisplay,
@@ -172,18 +132,69 @@ private struct GeneralSettings: View {
                     MonitorPairing(model: model, output: output, pairingFocused: $pairingFocused)
                 }
 
+                Section {
+                    updateRows
+                } header: {
+                    Text("Updates").font(DeskType.device)
+                } footer: {
+                    Text("Monitor Controls looks for a new version on GitHub only when you press the button.")
+                        .font(DeskType.body)
+                        .foregroundStyle(.secondary)
+                        .settingsFooter()
+                }
+
                 if let message = model.statusMessage {
                     Section { feedback(message) }
                 }
             }
             .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
             .task(id: navigation.pairingRequest) {
                 guard navigation.pairingRequest > 0 else { return }
                 scroll.scrollTo("monitor-pairing", anchor: .center)
                 pairingFocused = true
                 navigation.pairingRequest = 0
             }
+        }
+    }
+
+    @ViewBuilder private var updateRows: some View {
+        let updates = model.updates
+        switch updates.state {
+        case .idle:
+            settingsAction("Version \(updates.version)", button: "Check for Updates", action: updates.check)
+        case .checking:
+            progress("Checking for updates…")
+        case .current:
+            settingsAction("Version \(updates.version) is the latest.", button: "Check Again", action: updates.check)
+        case .available(let release):
+            if let blocker = updates.installBlocker {
+                settingsAction("Version \(release.version) is available. \(blocker)", button: "Open Release Page") {
+                    updates.openPage(of: release)
+                }
+            } else {
+                settingsAction("Version \(release.version) is available. You have \(updates.version).",
+                               button: "Install and Relaunch") { updates.install(release) }
+            }
+        case .installing(let release):
+            progress("Installing version \(release.version)…")
+        case .failed(let message, let release):
+            feedback(message)
+            HStack(spacing: 8) {
+                if let release {
+                    Button { updates.install(release) } label: { Text("Try Again").font(DeskType.control) }
+                    Button { updates.openPage(of: release) } label: { Text("Open Release Page").font(DeskType.control) }
+                } else {
+                    Button(action: updates.check) { Text("Check Again").font(DeskType.control) }
+                }
+            }
+            .controlSize(.regular)
+        }
+    }
+
+    private func progress(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text).font(DeskType.body)
         }
     }
 
@@ -272,7 +283,7 @@ private struct MonitorPairing: View {
             }
             .font(DeskType.body)
             .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+            .settingsFooter()
         }
     }
 
@@ -296,73 +307,64 @@ private struct DevicePriorities: View {
         let shown = routes.filter { !$0.isHidden }
         let hidden = routes.filter(\.isHidden)
 
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Automatic switching prefers devices higher in this list. Hidden devices are skipped.")
-                .font(DeskType.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 22)
-                .padding(.top, 4)
-                .padding(.bottom, 16)
-
-            if routes.isEmpty {
-                ContentUnavailableView {
-                    Label(role == .input ? "No saved microphones" : "No saved outputs",
-                          systemImage: role == .input ? "mic" : "speaker.wave.2")
-                        .font(DeskType.heading)
-                } description: {
-                    Text("Connect a device to add it to this list.")
-                        .font(DeskType.body)
-                }
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+        if routes.isEmpty && !audio.canImportLegacyPreferences && importResult == nil {
+            ContentUnavailableView {
+                Label(role == .input ? "No saved microphones" : "No saved outputs",
+                      systemImage: role == .input ? "mic" : "speaker.wave.2")
+            } description: {
+                Text("Connect a device to add it to this list.")
+            }
+        } else {
+            Form {
+                if !routes.isEmpty {
+                    Section {
                         ForEach(Array(shown.enumerated()), id: \.element.id) { index, route in
                             DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
                                       position: index + 1, count: shown.count, active: route.id == currentID)
-                            if index < shown.count - 1 { Divider().accessibilityHidden(true) }
                         }
-                        if !hidden.isEmpty {
-                            if !shown.isEmpty { Divider().accessibilityHidden(true) }
-                            Text("Hidden")
-                                .font(DeskType.body.weight(.medium))
+                        if shown.isEmpty {
+                            Text("Every device is hidden.")
+                                .font(DeskType.body)
                                 .foregroundStyle(.secondary)
-                                .accessibilityAddTraits(.isHeader)
-                                .padding(.top, shown.isEmpty ? 0 : 16)
-                                .padding(.bottom, 2)
-                            // Hidden devices take no part in automatic switching,
-                            // so they have no priority number or arrows.
-                            ForEach(Array(hidden.enumerated()), id: \.element.id) { index, route in
-                                DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
-                                          position: nil, count: 0, active: route.id == currentID)
-                                if index < hidden.count - 1 { Divider().accessibilityHidden(true) }
-                            }
                         }
-                    }
-                    .padding(.horizontal, 22)
-                }
-                .id(role)
-            }
-
-            if audio.canImportLegacyPreferences || importResult != nil {
-                VStack(alignment: .leading, spacing: 5) {
-                    if audio.canImportLegacyPreferences {
-                        Button(action: requestImport) {
-                            Text("Import from Audio Priority Bar…").font(DeskType.control)
-                        }
-                        .controlSize(.regular)
-                    }
-                    if let importResult {
-                        Text(importResult)
+                    } footer: {
+                        Text("Automatic switching prefers devices higher in this list. Hidden devices are skipped.")
                             .font(DeskType.body)
                             .foregroundStyle(.secondary)
+                            .settingsFooter()
                     }
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 12)
+                if !hidden.isEmpty {
+                    // Hidden devices take no part in automatic switching,
+                    // so they have no priority number or arrows.
+                    Section {
+                        ForEach(hidden, id: \.id) { route in
+                            DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
+                                      position: nil, count: 0, active: route.id == currentID)
+                        }
+                    } header: {
+                        Text("Hidden").font(DeskType.device)
+                    }
+                }
+                if audio.canImportLegacyPreferences || importResult != nil {
+                    Section {
+                        if audio.canImportLegacyPreferences {
+                            Button(action: requestImport) {
+                                Text("Import from Audio Priority Bar…").font(DeskType.control)
+                            }
+                            .controlSize(.regular)
+                        }
+                        if let importResult {
+                            Text(importResult)
+                                .font(DeskType.body)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
+            .formStyle(.grouped)
+            .id(role)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -407,6 +409,11 @@ private struct DeviceRow: View {
             Spacer(minLength: 2)
 
             HStack(spacing: 2) {
+                // Forget sits first, so the other buttons keep their columns
+                // and the eye stays at the trailing edge on every row.
+                if !route.isConnected {
+                    actionButton("Forget " + name, symbol: "trash") { model.forget(route) }
+                }
                 if let position {
                     actionButton("Move \(name) up", symbol: "chevron.up") { audio.move(route, by: -1) }
                         .disabled(position == 1)
@@ -416,15 +423,9 @@ private struct DeviceRow: View {
                 actionButton((route.isHidden ? "Show " : "Hide ") + name, symbol: route.isHidden ? "eye.slash" : "eye") {
                     audio.setHidden(!route.isHidden, for: route)
                 }
-                if route.isConnected {
-                    // Keep the other buttons in the same column on every row.
-                    Color.clear.frame(width: 28, height: 28).accessibilityHidden(true)
-                } else {
-                    actionButton("Forget " + name, symbol: "trash") { model.forget(route) }
-                }
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 2)
     }
 
     private var status: String {
@@ -441,5 +442,14 @@ private struct DeviceRow: View {
         .buttonStyle(.borderless)
         .accessibilityLabel(label)
         .help(label)
+    }
+}
+
+private extension View {
+    /// Section footers read from the leading edge, like the rows above them.
+    func settingsFooter() -> some View {
+        fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

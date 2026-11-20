@@ -188,10 +188,11 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
             window.title = "Monitor Controls Settings"
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
+            window.toolbarStyle = .unified
             window.isReleasedWhenClosed = false
             let host = NSHostingController(rootView: SettingsView(model: model, navigation: settingsNavigation))
+            // Let the split view put the section name and its toolbar in the title bar.
+            host.sceneBridgingOptions = [.title, .toolbars]
             // Let the window own its dimensions. Switching to a long device list
             // should scroll its content without resizing the user's window.
             host.sizingOptions = []

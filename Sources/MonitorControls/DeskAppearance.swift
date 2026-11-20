@@ -7,7 +7,6 @@ enum DeskType {
     static let control = Font.body.weight(.medium)
     static let device = Font.headline
     static let heading = Font.title3.weight(.semibold)
-    static let title = Font.title2.weight(.semibold)
 }
 
 extension View {

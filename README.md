@@ -4,7 +4,7 @@ A native macOS menu-bar app for external display brightness, speaker volume, and
 
 ## Use
 
-Download [MonitorControls.zip from the latest release](https://github.com/ars-3n/MacOS-External-Monitor-Controls/releases/latest/download/MonitorControls.zip), unzip it, drag **Monitor Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires a Mac with Apple silicon and macOS 14 or later.
+Download [MonitorControls.zip from the latest release](https://github.com/ars-3n/Monitor-Controls/releases/latest/download/MonitorControls.zip), unzip it, drag **Monitor Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires a Mac with Apple silicon and macOS 14 or later.
 
 Upgrading from Desk Controls? Quit the old app, move its copy out of Applications, then open **Monitor Controls.app** from Applications. Your device preferences carry over. If you use Open at Login, check its status in **Settings → General** after the move.
 
@@ -13,6 +13,7 @@ Upgrading from Desk Controls? Quit the old app, move its copy out of Application
 - **Microphone** lets you choose the macOS input, adjust gain and toggle mute when supported. An input chosen in another app that changes the system default is remembered until it disconnects or you choose another one.
 - **Settings → Outputs** and **Settings → Microphones** show each device’s priority and visibility. Hidden devices are listed in a separate group below the others. A disconnected device has a trash button that removes it from the list. Existing Audio Priority Bar users can import saved device choices once. The source preferences remain available to the old app.
 - **Settings → General** includes Open at Login, keyboard access, and manual monitor speaker pairing when a display output is active. Use manual pairing when displays have the same name or the output and display names differ.
+- **Check for Updates** in **Settings → General** looks for a newer release on GitHub. If there is one, **Install and Relaunch** replaces the app with it and opens the new version. The app never checks on its own.
 
 The sliders work without Accessibility access. To use the Apple media keys, grant Monitor Controls access in **System Settings → Privacy & Security → Accessibility**. When trying these keys, quit MonitorControl or turn off its Apple key handling so that one app handles each keypress. Right-click the menu-bar icon to quit Monitor Controls.
 
@@ -30,6 +31,8 @@ swift test
 The build script produces an Apple silicon app in `dist/MonitorControls.zip`. It does not run on Intel Macs. GitHub Actions tests and packages each commit added to `main`, then publishes the ZIP in a release tagged with the app version and commit hash. These builds have no Developer ID signature or notarization.
 
 The script signs the app ad hoc. macOS ties Accessibility access to the signature, so an ad-hoc build loses that access each time it replaces an older one. Remove Monitor Controls from the Accessibility list and add it again after updating. To keep access across your own builds, set `CODESIGN_IDENTITY` to the name of a signing certificate in your keychain.
+
+The app installs an update only if it is signed with the same certificate as the running copy. An ad-hoc build has no certificate to compare, so it opens the release page for a manual download.
 
 ```sh
 CODESIGN_IDENTITY="My Signing Certificate" ./scripts/build.sh

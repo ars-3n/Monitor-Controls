@@ -10,10 +10,12 @@ let package = Package(
         .target(name: "DisplayBridge", linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreGraphics")]),
         .target(name: "DisplayHardware", dependencies: ["DisplayBridge"]),
         .target(name: "DeskPolicy"),
-        .executableTarget(name: "MonitorControls", dependencies: ["AudioRouting", "DisplayHardware", "DeskPolicy"]),
+        .target(name: "AppUpdate", linkerSettings: [.linkedFramework("Security")]),
+        .executableTarget(name: "MonitorControls", dependencies: ["AudioRouting", "DisplayHardware", "DeskPolicy", "AppUpdate"]),
         .testTarget(name: "AudioRoutingTests", dependencies: ["AudioRouting"]),
         .testTarget(name: "DisplayHardwareTests", dependencies: ["DisplayHardware"]),
         .testTarget(name: "DeskPolicyTests", dependencies: ["DeskPolicy"]),
+        .testTarget(name: "AppUpdateTests", dependencies: ["AppUpdate"]),
         .testTarget(name: "DisplayAcceptance", dependencies: ["DisplayHardware"])
     ],
     swiftLanguageModes: [.v6]

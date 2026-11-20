@@ -47,6 +47,9 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     private let settingsNavigation = SettingsNavigation()
     private var wakeObserver: NSObjectProtocol?
     private var outsideClickMonitor: Any?
+    /// When a press on the menu-bar icon closed the panel. The click's own
+    /// action arrives afterwards and must not open it again.
+    private var iconPressClosedPanelAt: TimeInterval?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -123,11 +126,19 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             NSMenu.popUpContextMenu(contextMenu, with: event, for: button)
             return
         }
-        if popover.isShown { popover.performClose(nil) } else { showPanel() }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else if let closed = iconPressClosedPanelAt, ProcessInfo.processInfo.systemUptime - closed < 3 {
+            // This click already closed the panel on its way down.
+            iconPressClosedPanelAt = nil
+        } else {
+            showPanel()
+        }
     }
 
     private func showPanel() {
         guard let button = item?.button else { return }
+        iconPressClosedPanelAt = nil
         model.openedPanel()
         if popover.contentViewController == nil {
             popover.contentViewController = NSHostingController(rootView: PanelView(model: model) { [weak self] destination in
@@ -161,7 +172,13 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         closePanel()
     }
 
-    private func closePanel() {
+    private func closePanel(leftPress: Bool = false) {
+        guard popover.isShown else { return }
+        // macOS reports a press on the icon as an outside click first, then sends the icon's action.
+        if leftPress || NSEvent.pressedMouseButtons & 1 != 0, let button = item?.button, let bar = button.window,
+           bar.convertToScreen(button.convert(button.bounds, to: nil)).insetBy(dx: -1, dy: -4).contains(NSEvent.mouseLocation) {
+            iconPressClosedPanelAt = ProcessInfo.processInfo.systemUptime
+        }
         popover.performClose(nil)
         if popover.isShown { popover.close() }
     }
@@ -171,8 +188,9 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         // Covers clicks that leave the panel focused, such as on the menu bar.
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.closePanel() }
+        ) { [weak self] event in
+            let leftPress = event.type == .leftMouseDown
+            MainActor.assumeIsolated { self?.closePanel(leftPress: leftPress) }
         }
     }
 

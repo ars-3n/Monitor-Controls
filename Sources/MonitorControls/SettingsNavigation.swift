@@ -5,12 +5,12 @@ enum SettingsDestination {
 }
 
 enum SettingsSection: CaseIterable {
-    case general, devices
+    case devices, general
 }
 
 @MainActor @Observable
 final class SettingsNavigation {
-    var section = SettingsSection.general
+    var section = SettingsSection.devices
     var pairingRequest = 0
 
     func open(_ destination: SettingsDestination) {

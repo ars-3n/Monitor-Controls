@@ -18,10 +18,10 @@ struct SettingsView: View {
                 get: { navigation.section },
                 set: { if let section = $0 { navigation.section = section } }
             )) {
-                Label("General", systemImage: "gearshape")
-                    .tag(SettingsSection.general)
                 Label("Devices", systemImage: "headphones")
                     .tag(SettingsSection.devices)
+                Label("General", systemImage: "gearshape")
+                    .tag(SettingsSection.general)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 230)
             .toolbar(removing: .sidebarToggle)
@@ -125,23 +125,27 @@ private struct GeneralSettings: View {
                     MonitorPairing(model: model, output: output, pairingFocused: $pairingFocused)
                 }
 
+                if let message = model.statusMessage {
+                    Section { feedback(message) }
+                }
+
                 Section {
                     updateRows
                 } header: {
                     Text("Updates").font(DeskType.device)
                 } footer: {
-                    Text("Monitor Controls looks for a new version on GitHub only when you press the button.")
-                        .font(DeskType.body)
-                        .foregroundStyle(.secondary)
-                        .settingsFooter()
-                }
-
-                if let message = model.statusMessage {
-                    Section { feedback(message) }
+                    // The version line is the last thing on the page and
+                    // scrolls with it.
+                    VStack(spacing: 28) {
+                        Text("Monitor Controls looks for a new version on GitHub only when you press the button.")
+                            .font(DeskType.body)
+                            .foregroundStyle(.secondary)
+                            .settingsFooter()
+                        about
+                    }
                 }
             }
             .formStyle(.grouped)
-            .safeAreaInset(edge: .bottom, spacing: 0) { about }
             .task(id: navigation.pairingRequest) {
                 guard navigation.pairingRequest > 0 else { return }
                 scroll.scrollTo("monitor-pairing", anchor: .center)
@@ -164,7 +168,6 @@ private struct GeneralSettings: View {
         }
         .font(DeskType.body)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
     }
 
     @ViewBuilder private var updateRows: some View {

@@ -79,7 +79,7 @@ private struct DisplaySection: View {
         Group {
             if displays.isEmpty {
                 HStack(spacing: PanelMetrics.columnSpacing) {
-                    RowSymbol(name: "display")
+                    MonitorGlyph(brightness: nil)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Brightness")
                             .font(DeskType.body.weight(.medium))
@@ -130,7 +130,7 @@ private struct DisplaySection: View {
                 }
                 let name = labels[display.id] ?? display.name
                 HStack(alignment: .center, spacing: PanelMetrics.columnSpacing) {
-                    RowSymbol(name: "sun.max.fill")
+                    MonitorGlyph(brightness: display.brightness)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Brightness")
                             .font(DeskType.body.weight(.medium))
@@ -364,6 +364,48 @@ private struct LevelReadout: View {
             .font(DeskType.control.monospacedDigit())
             .frame(minWidth: 35, alignment: .trailing)
             .accessibilityHidden(true)
+    }
+}
+
+/// A small monitor whose screen lightens with the display's brightness.
+private struct MonitorGlyph: View {
+    let brightness: Double?
+
+    /// The drawing below is laid out on a 64 by 52 grid.
+    private static let scale = PanelMetrics.symbolColumn / 64
+
+    var body: some View {
+        Canvas { context, _ in
+            context.scaleBy(x: Self.scale, y: Self.scale)
+            let face = Path(roundedRect: CGRect(x: 1, y: 2, width: 62, height: 39), cornerRadius: 6)
+            let screen = CGRect(x: 4, y: 5, width: 56, height: 33)
+            let stand = Path(roundedRect: CGRect(x: 28.5, y: 39, width: 7, height: 9), cornerRadius: 1.5)
+            let foot = Path(roundedRect: CGRect(x: 20, y: 47, width: 24, height: 3), cornerRadius: 1.5)
+            context.fill(stand, with: .color(.secondary))
+            context.fill(foot, with: .color(.secondary))
+            context.fill(face, with: .color(Color(white: 0.20)))
+            var glass = context
+            glass.clip(to: Path(roundedRect: screen, cornerRadius: 3))
+            glass.fill(Path(screen), with: .color(Color(white: 0.16)))
+            if let brightness {
+                // A dark-to-light sweep stays recognizable from minimum to maximum brightness.
+                let luminance = min(1, max(0, brightness))
+                glass.opacity = 0.25 + 0.75 * luminance
+                glass.fill(Path(screen), with: .linearGradient(
+                    Gradient(colors: [Color(red: 0.05, green: 0.27, blue: 0.32),
+                                      Color(red: 0.43, green: 0.85, blue: 0.73)]),
+                    startPoint: CGPoint(x: 5, y: 29), endPoint: CGPoint(x: 58, y: 10)
+                ))
+                var ridge = Path()
+                ridge.move(to: CGPoint(x: 2, y: 39))
+                ridge.addQuadCurve(to: CGPoint(x: 62, y: 6), control: CGPoint(x: 32, y: 42))
+                ridge.addLine(to: CGPoint(x: 62, y: 40))
+                ridge.closeSubpath()
+                glass.fill(ridge, with: .color(.white.opacity(0.34)))
+            }
+        }
+        .frame(width: PanelMetrics.symbolColumn, height: 52 * Self.scale)
+        .accessibilityHidden(true)
     }
 }
 

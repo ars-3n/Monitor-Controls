@@ -19,7 +19,7 @@ Coming from Desk Controls? Quit it and move it out of Applications first. Your d
 - Each external monitor has its own brightness slider. The app sets brightness over DDC/CI as you drag.
 - Volume and mute follow the current sound output. Monitor speakers are set over DDC/CI. AirPods and other outputs use the macOS volume.
 - The microphone row sets input gain and mute when the device supports them.
-- The output and microphone names are menus for switching devices.
+- Each audio row lists its three highest-priority devices. Click one to switch to it. **Show all** opens the full list when there are more.
 
 ## Settings
 

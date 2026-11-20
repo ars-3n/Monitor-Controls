@@ -1,5 +1,6 @@
 import AppKit
 import AudioRouting
+import DeskPolicy
 import DisplayHardware
 import SwiftUI
 
@@ -181,13 +182,15 @@ private struct AudioChannel: View {
         let needsPairing = !input && active?.isDisplay == true
             && ((level == nil && model.display.displays.contains { $0.volume != nil })
                 || (muted == nil && model.display.displays.contains { $0.muted != nil }))
-        return HStack(alignment: .center, spacing: PanelMetrics.columnSpacing) {
+        // The device list hangs below, so the button lines up with the title and slider.
+        return HStack(alignment: .top, spacing: PanelMetrics.columnSpacing) {
             MuteControl(input: input, muted: muteTarget == nil ? nil : muted) {
                 guard let muteTarget, muteTarget == target(input: input, forMute: true),
                       let current = input ? audio.inputMuted : model.outputMuted else { return }
                 if input { audio.setInputMuted(!current) } else { model.setOutputMuted(!current) }
             }
             .id(muteTarget)
+            .padding(.top, 6)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -201,7 +204,6 @@ private struct AudioChannel: View {
                             .font(DeskType.body.weight(.medium))
                     }
                 }
-                RoutePicker(audio: audio, input: input)
                 if active != nil {
                     if let level {
                         HStack(spacing: 12) {
@@ -223,6 +225,8 @@ private struct AudioChannel: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                RouteList(audio: audio, input: input)
+                    .padding(.top, 2)
             }
         }
     }
@@ -252,9 +256,12 @@ private struct AudioChannel: View {
 }
 
 /// Keep inventory observation separate so dragging a fader doesn't rebuild an open device menu.
-private struct RoutePicker: View {
+private struct RouteList: View {
     let audio: AudioController
     let input: Bool
+
+    /// Devices listed in the panel. The rest are behind "Show all".
+    private static let listed = 3
 
     var body: some View {
         let active = input ? audio.input : audio.output
@@ -266,49 +273,102 @@ private struct RoutePicker: View {
                 .foregroundStyle(.secondary)
         } else {
             let names = routeLabels(for: devices)
-            let selectedName = active.map { names[$0.id] ?? $0.name } ?? "Choose a device"
+            let listed = shortlist(available.map(\.id), active: active?.id, limit: Self.listed)
             let title = input ? "Choose microphone" : "Choose audio output"
-            Menu {
-                Picker(title, selection: Binding(
-                    get: { active?.id },
-                    set: { id in
-                        let live = input ? audio.inputs : audio.outputs
-                        guard let shown = available.first(where: { $0.id == id }),
-                              let device = live.first(where: { $0.id == shown.id && $0.uid == shown.uid }),
-                              device.isConnected, !device.isHidden else { return }
-                        audio.select(device)
-                    }
-                )) {
-                    if active == nil { Text("Choose a device").tag(String?.none).disabled(true) }
-                    ForEach(available) { device in
-                        Text(names[device.id] ?? device.name).tag(Optional(device.id))
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(available.filter { listed.contains($0.id) }) { device in
+                    RouteRow(name: names[device.id] ?? device.name, symbol: routeSymbol(for: device),
+                             selected: device.id == active?.id, input: input) {
+                        select(device.id, among: available)
                     }
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                .font(DeskType.body)
-            } label: {
-                HStack(spacing: 5) {
-                    Text(selectedName)
-                        .font(DeskType.device)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
+                if available.count > listed.count {
+                    Menu {
+                        Picker(title, selection: Binding(get: { active?.id }, set: { select($0, among: available) })) {
+                            if active == nil { Text("Choose a device").tag(String?.none).disabled(true) }
+                            ForEach(available) { device in
+                                Text(names[device.id] ?? device.name).tag(Optional(device.id))
+                            }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                        .font(DeskType.body)
+                    } label: {
+                        RouteRowLabel(name: "Show all", symbol: "ellipsis", selected: false)
+                            .foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .accessibilityLabel(title)
+                    .help(title)
                 }
-                .contentShape(Rectangle())
             }
-            // A plain label starts at the same edge as the text above it.
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(title)
-            .accessibilityValue(selectedName)
-            .help(title + " · " + selectedName)
+            // The row highlight extends past the text, which stays on the column's edge.
+            .padding(.horizontal, -RouteRowLabel.inset)
         }
+    }
+
+    private func select(_ id: String?, among available: [RouteDevice]) {
+        let live = input ? audio.inputs : audio.outputs
+        guard let shown = available.first(where: { $0.id == id }),
+              let device = live.first(where: { $0.id == shown.id && $0.uid == shown.uid }),
+              device.isConnected, !device.isHidden else { return }
+        audio.select(device)
+    }
+}
+
+private struct RouteRow: View {
+    let name: String
+    let symbol: String
+    let selected: Bool
+    let input: Bool
+    let choose: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: choose) {
+            RouteRowLabel(name: name, symbol: symbol, selected: selected)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? AnyShapeStyle(Color.accentColor.opacity(0.22))
+                          : AnyShapeStyle(.primary.opacity(hovered ? 0.08 : 0))))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(selected ? name : "Use \(name) as the \(input ? "microphone" : "output")")
+    }
+}
+
+private struct RouteRowLabel: View {
+    static let inset: CGFloat = 7
+
+    let name: String
+    let symbol: String
+    let selected: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            Text(name)
+                .font(selected ? DeskType.control : DeskType.body)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            if selected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, Self.inset)
+        .frame(height: 26)
+        .contentShape(Rectangle())
     }
 }
 
@@ -431,6 +491,18 @@ func displayLabels(for displays: [MonitorDisplay]) -> [String: String] {
         }
     }
     return labels
+}
+
+/// Core Audio has no icon for a device, so beyond monitors the name decides.
+func routeSymbol(for device: RouteDevice) -> String {
+    if device.isDisplay { return "display" }
+    let name = device.name.lowercased()
+    if name.contains("airpods max") { return "airpodsmax" }
+    if name.contains("airpods") { return name.contains("pro") ? "airpodspro" : "airpods" }
+    if name.contains("macbook") { return "laptopcomputer" }
+    if name.contains("iphone") { return "iphone" }
+    if name.contains("headphone") || name.contains("headset") { return "headphones" }
+    return device.role == .input ? "mic" : "hifispeaker"
 }
 
 func routeLabels(for devices: [RouteDevice]) -> [String: String] {

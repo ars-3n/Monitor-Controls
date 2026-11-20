@@ -17,6 +17,11 @@ private func payload(tag: String = "v1.0.3-4abbee934948",
     return try! JSONSerialization.data(withJSONObject: release)
 }
 
+@Test func sourceNamesItsGitHubPages() {
+    #expect(source.page.absoluteString == "https://github.com/ars-3n/Monitor-Controls")
+    #expect(source.latestRelease.absoluteString == "https://api.github.com/repos/ars-3n/Monitor-Controls/releases/latest")
+}
+
 @Test func versionsCompareByNumberNotByText() throws {
     let old = try #require(AppVersion("1.0.9"))
     let new = try #require(AppVersion("1.0.10"))

@@ -13,7 +13,7 @@ Upgrading from Desk Controls? Quit the old app, move its copy out of Application
 - **Microphone** lets you choose the macOS input, adjust gain and toggle mute when supported. An input chosen in another app that changes the system default is remembered until it disconnects or you choose another one.
 - **Settings → Outputs** and **Settings → Microphones** show each device’s priority and visibility. Hidden devices are listed in a separate group below the others. A disconnected device has a trash button that removes it from the list. Existing Audio Priority Bar users can import saved device choices once. The source preferences remain available to the old app.
 - **Settings → General** includes Open at Login, keyboard access, and manual monitor speaker pairing when a display output is active. Use manual pairing when displays have the same name or the output and display names differ.
-- **Check for Updates** in **Settings → General** looks for a newer release on GitHub. If there is one, **Install and Relaunch** replaces the app with it and opens the new version. The app never checks on its own.
+- **Check for Updates** in **Settings → General** looks for a newer release on GitHub. If there is one, **Install and Relaunch** replaces the app with it and opens the new version. The app never checks on its own. The installed version and a link to this repository are at the bottom of the page.
 
 The sliders work without Accessibility access. To use the Apple media keys, grant Monitor Controls access in **System Settings → Privacy & Security → Accessibility**. When trying these keys, quit MonitorControl or turn off its Apple key handling so that one app handles each keypress. Right-click the menu-bar icon to quit Monitor Controls.
 

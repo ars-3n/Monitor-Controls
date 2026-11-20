@@ -43,6 +43,7 @@ public struct UpdateSource: Equatable, Sendable {
         self.asset = asset
     }
 
+    public var page: URL { URL(string: "https://github.com/\(repository)")! }
     public var latestRelease: URL { URL(string: "https://api.github.com/repos/\(repository)/releases/latest")! }
 
     /// Reads GitHub's description of a release. Rejects one that points

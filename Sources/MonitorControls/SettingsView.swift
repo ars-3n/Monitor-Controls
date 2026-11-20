@@ -148,6 +148,7 @@ private struct GeneralSettings: View {
                 }
             }
             .formStyle(.grouped)
+            .safeAreaInset(edge: .bottom, spacing: 0) { about }
             .task(id: navigation.pairingRequest) {
                 guard navigation.pairingRequest > 0 else { return }
                 scroll.scrollTo("monitor-pairing", anchor: .center)
@@ -157,59 +158,89 @@ private struct GeneralSettings: View {
         }
     }
 
+    private var about: some View {
+        let updates = model.updates
+        return HStack(spacing: 6) {
+            Group {
+                Text("Monitor Controls \(updates.version)")
+                Text("·").accessibilityHidden(true)
+            }
+            .foregroundStyle(.secondary)
+            Link("GitHub", destination: updates.repository)
+                .help(updates.repository.absoluteString)
+        }
+        .font(DeskType.body)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+    }
+
     @ViewBuilder private var updateRows: some View {
         let updates = model.updates
+        Group {
+            if case .failed(let message, let release) = updates.state {
+                feedback(message)
+                HStack(spacing: 8) {
+                    if let release {
+                        Button { updates.install(release) } label: { Text("Try Again").font(DeskType.control) }
+                        Button { updates.openPage(of: release) } label: { Text("Open Release Page").font(DeskType.control) }
+                    } else {
+                        Button(action: updates.check) { Text("Check Again").font(DeskType.control) }
+                    }
+                }
+                .controlSize(.regular)
+            } else {
+                // One row for every other state, so only its text changes.
+                let row = updateRow(updates)
+                settingsAction(row.text, busy: updates.isBusy, button: row.button, action: row.action)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: updates.state)
+    }
+
+    private func updateRow(_ updates: UpdateModel) -> (text: String, button: String, action: () -> Void) {
         switch updates.state {
-        case .idle:
-            settingsAction("Version \(updates.version)", button: "Check for Updates", action: updates.check)
+        case .idle, .failed:
+            return ("Version \(updates.version)", "Check for Updates", updates.check)
         case .checking:
-            progress("Checking for updates…")
+            return ("Checking for updates…", "Check for Updates", {})
         case .current:
-            settingsAction("Version \(updates.version) is the latest.", button: "Check Again", action: updates.check)
+            return ("Version \(updates.version) is the latest.", "Check for Updates", updates.check)
         case .available(let release):
             if let blocker = updates.installBlocker {
-                settingsAction("Version \(release.version) is available. \(blocker)", button: "Open Release Page") {
-                    updates.openPage(of: release)
-                }
-            } else {
-                settingsAction("Version \(release.version) is available. You have \(updates.version).",
-                               button: "Install and Relaunch") { updates.install(release) }
+                return ("Version \(release.version) is available. \(blocker)", "Open Release Page",
+                        { updates.openPage(of: release) })
             }
+            return ("Version \(release.version) is available. You have \(updates.version).", "Install and Relaunch",
+                    { updates.install(release) })
         case .installing(let release):
-            progress("Installing version \(release.version)…")
-        case .failed(let message, let release):
-            feedback(message)
-            HStack(spacing: 8) {
-                if let release {
-                    Button { updates.install(release) } label: { Text("Try Again").font(DeskType.control) }
-                    Button { updates.openPage(of: release) } label: { Text("Open Release Page").font(DeskType.control) }
-                } else {
-                    Button(action: updates.check) { Text("Check Again").font(DeskType.control) }
-                }
-            }
-            .controlSize(.regular)
+            return ("Installing version \(release.version)…", "Install and Relaunch", {})
         }
     }
 
-    private func progress(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text(text).font(DeskType.body)
-        }
-    }
-
-    private func settingsAction(_ explanation: String, button: String, action: @escaping () -> Void) -> some View {
+    /// A line of text with one button. `busy` reserves room for a spinner
+    /// beside the button, so the row keeps its shape while work is under way.
+    private func settingsAction(_ explanation: String, busy: Bool? = nil, button: String,
+                                action: @escaping () -> Void) -> some View {
         let actionButton = Button(action: action) { Text(button).font(DeskType.control) }
             .controlSize(.regular)
+            .disabled(busy == true)
+        let spinner = ProgressView()
+            .controlSize(.small)
+            .opacity(busy == true ? 1 : 0)
+            .accessibilityHidden(busy != true)
         return ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
-                Text(explanation).fixedSize()
+                Text(explanation).fixedSize().contentTransition(.opacity)
                 Spacer(minLength: 0)
+                if busy != nil { spinner }
                 actionButton.fixedSize()
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(explanation).fixedSize(horizontal: false, vertical: true)
-                actionButton
+                HStack(spacing: 12) {
+                    actionButton
+                    if busy != nil { spinner }
+                }
             }
         }
         .font(DeskType.body)

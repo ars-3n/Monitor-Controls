@@ -157,6 +157,10 @@ struct RoutePolicy {
     private var awaitingInputFallback = false
     private var pendingSelection: (target: String, superseded: Set<String>, expires: TimeInterval)?
 
+    init(heldID: String? = nil) {
+        self.heldID = heldID
+    }
+
     mutating func desired(current: RouteDevice?, devices: [RouteDevice], rankedIDs: Set<String>,
                           time: TimeInterval) -> RouteDevice? {
         let live = devices.filter(\.isConnected)

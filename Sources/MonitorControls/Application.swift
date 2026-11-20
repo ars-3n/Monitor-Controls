@@ -174,8 +174,12 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         }
         model.audio.refresh()
         model.refreshServices()
-        NSApp.activate()
+        // A menu-bar app is rarely the active one. macOS declines the plain
+        // activate() request there and leaves the window behind the app in use.
+        NSApp.activate(ignoringOtherApps: true)
         if settingsWindow?.isMiniaturized == true { settingsWindow?.deminiaturize(nil) }
         settingsWindow?.makeKeyAndOrderFront(nil)
+        // Keeps the window in view if a later macOS declines this call too.
+        settingsWindow?.orderFrontRegardless()
     }
 }

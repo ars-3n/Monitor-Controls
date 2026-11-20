@@ -68,8 +68,14 @@ final class DeskModel {
 
     func openedPanel() {
         audio.refreshLevels()
-        display.refreshValues()
+        display.refreshValues(userIsPresent: true)
         refreshKeyboardService()
+    }
+
+    /// An error has been seen once the panel that showed it closes.
+    func closedPanel() {
+        audio.dismissError()
+        display.dismissError()
     }
 
     var statusMessage: String? {

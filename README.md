@@ -27,6 +27,14 @@ swift test
 
 The build script produces a universal Apple silicon and Intel app in `dist/DeskControls.zip`. GitHub Actions tests and packages each commit added to `main`, then publishes the ZIP in a release tagged with the app version and commit hash. These builds have no Developer ID signature or notarization.
 
+The script signs the app ad hoc. macOS ties Accessibility access to the signature, so an ad-hoc build loses that access each time it replaces an older one. Remove Desk Controls from the Accessibility list and add it again after updating. To keep access across your own builds, set `CODESIGN_IDENTITY` to the name of a signing certificate in your keychain.
+
+```sh
+CODESIGN_IDENTITY="My Signing Certificate" ./scripts/build.sh
+```
+
+GitHub Actions signs a release with a certificate when the repository has two secrets. `SIGNING_CERTIFICATE_P12` is a base64-encoded `.p12` export of a code signing certificate with its private key, and `SIGNING_CERTIFICATE_PASSWORD` is the export password. Without them the release is signed ad hoc. A self-signed certificate keeps Accessibility access across updates as long as every release uses the same one.
+
 Normal tests use fixtures. On a Mac with exactly one LG ULTRAWIDE, an explicit hardware check reads the starting brightness, volume and mute, tests small changes, restores the originals, and verifies them. It briefly mutes the monitor if it was initially unmuted.
 
 ```sh

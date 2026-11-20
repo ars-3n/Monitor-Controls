@@ -267,6 +267,8 @@ struct AudioSnapshot: Sendable {
         refresh()
     }
 
+    public func dismissError() { lastError = nil }
+
     public func refreshLevels() {
         refreshLevels(for: .input)
         refreshLevels(for: .output)

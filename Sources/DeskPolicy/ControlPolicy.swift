@@ -42,7 +42,9 @@ public struct DisplayPlacement {
     public init(screenID: UInt32, frame: CGRect) { self.screenID = screenID; self.frame = frame }
 
     public static func atPointer(_ point: CGPoint, screens: [Self]) -> UInt32? {
-        screens.first { $0.frame.contains(point) }?.screenID
+        // The pointer's top pixel row reports y == frame.maxY, which
+        // CGRect.contains excludes. NSMouseInRect owns the top edge.
+        screens.first { NSMouseInRect(point, $0.frame, false) }?.screenID
     }
 }
 

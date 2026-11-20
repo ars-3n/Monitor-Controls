@@ -65,6 +65,16 @@ import DeskPolicy
     #expect(DisplayPlacement.atPointer(CGPoint(x: -5, y: -30), screens: screens) == nil)
 }
 
+@Test func pointerOnTheTopPixelRowStaysOnItsOwnScreen() {
+    let lower = DisplayPlacement(screenID: 7, frame: CGRect(x: 0, y: 0, width: 1500, height: 900))
+    let upper = DisplayPlacement(screenID: 23, frame: CGRect(x: 0, y: 900, width: 1500, height: 800))
+    // NSEvent.mouseLocation reports y == frame.maxY on the top row.
+    #expect(DisplayPlacement.atPointer(CGPoint(x: 400, y: 900), screens: [lower]) == 7)
+    #expect(DisplayPlacement.atPointer(CGPoint(x: 400, y: 900), screens: [upper, lower]) == 7)
+    #expect(DisplayPlacement.atPointer(CGPoint(x: 400, y: 1700), screens: [upper, lower]) == 23)
+    #expect(DisplayPlacement.atPointer(CGPoint(x: 400, y: 900.5), screens: [upper, lower]) == 23)
+}
+
 @Test func pointingAtAnUnsupportedMonitorDoesNotDimTheMacBook() throws {
     let external = KeyTarget.brightness(external: true, controllableID: nil)
     let builtin = KeyTarget.brightness(external: false, controllableID: nil)

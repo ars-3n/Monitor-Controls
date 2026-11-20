@@ -164,8 +164,12 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
                 usleep(40000)
             }
             var observed = read(key.feature, on: endpoint, allowed: allowed)
-            if sent, !DDCValue.confirmed(observed, target: target, feature: key.feature, lg: endpoint.allowsLGQuirk), allowed() {
-                usleep(50000)
+            // A panel can keep reporting the previous value for a moment
+            // after it accepts a write. Give it a longer second chance.
+            for pause: useconds_t in [50000, 250000] {
+                guard sent, allowed(),
+                      !DDCValue.confirmed(observed, target: target, feature: key.feature, lg: endpoint.allowsLGQuirk) else { break }
+                usleep(pause)
                 observed = read(key.feature, on: endpoint, allowed: allowed)
             }
             guard allowed() else { return .obsolete }

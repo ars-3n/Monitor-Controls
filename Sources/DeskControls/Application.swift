@@ -38,7 +38,7 @@ enum DeskControlsApp {
 }
 
 @MainActor
-private final class DeskDelegate: NSObject, NSApplicationDelegate {
+private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let model = DeskModel()
     private let popover = NSPopover()
     private var item: NSStatusItem?
@@ -60,6 +60,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
         }
         popover.behavior = .transient
         popover.animates = false
+        popover.delegate = self
         let menu = NSMenu()
         let root = NSMenuItem()
         root.submenu = makeAppMenu()
@@ -81,6 +82,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
         model.refreshServices(checkLogin: settingsWindow?.isVisible == true)
     }
     func applicationDidChangeScreenParameters(_ notification: Notification) { model.screenParametersChanged() }
+    func popoverDidClose(_ notification: Notification) { model.closedPanel() }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if let window = settingsWindow, window.isVisible || window.isMiniaturized {

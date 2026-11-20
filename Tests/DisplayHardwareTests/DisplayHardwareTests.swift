@@ -350,3 +350,66 @@ private final class SimulatedChannel: DDCChannel, Sendable {
     #expect(controller.displays.first?.volume == 0.18)
     #expect(controller.lastError == nil)
 }
+
+@MainActor @Test func openingThePanelRecoversFromAMissedWakeNotification() async {
+    let worker = TestDisplayIO()
+    let controller = DisplayController(worker: worker) { [deskScreen] }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    controller.powerChanged(NSWorkspace.willSleepNotification)
+    controller.powerChanged(NSWorkspace.screensDidSleepNotification)
+    // An audio route change during sleep must not wake the hardware.
+    controller.refreshValues()
+    await controller.waitUntilIdle()
+    #expect(controller.displays.isEmpty)
+
+    controller.refreshValues(userIsPresent: true)
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.brightness == 0.25)
+    controller.setBrightness(0.5, for: "lg")
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.brightness == 0.5)
+}
+
+/// Accepts a write at once and reports the previous value for two more reads.
+private final class LaggingChannel: DDCChannel, Sendable {
+    let state = OSAllocatedUnfairLock(initialState: (reported: UInt8(25), accepted: UInt8(25), staleReads: 0))
+
+    func read(_ feature: Feature) -> [UInt8]? {
+        let current: UInt8 = state.withLock {
+            guard feature == .brightness else { return feature == .mute ? 2 : 25 }
+            if $0.staleReads > 0 { $0.staleReads -= 1 } else { $0.reported = $0.accepted }
+            return $0.reported
+        }
+        let bytes: [UInt8] = [0x6e, 0x88, 2, 0, feature.rawValue, 0, 0, 100, 0, current]
+        return bytes + [bytes.reduce(UInt8(0x50), ^)]
+    }
+
+    func write(_ feature: Feature, value: UInt16) -> Bool {
+        state.withLock {
+            $0.accepted = UInt8(value)
+            $0.staleReads = 2
+        }
+        return true
+    }
+}
+
+@Test func slowPanelGetsALaterReadBeforeTheChangeIsReportedAsFailed() async {
+    let channel = LaggingChannel()
+    let worker = DisplayWorker(discover: { _ in
+        let display = MonitorDisplay(id: "lg", screenID: 42, name: "LG", brightness: nil, volume: nil, muted: nil)
+        return [Endpoint(display: display, channel: channel, allowsLGQuirk: false, appleBrightness: false)]
+    }, isOnline: { _ in true })
+    let session = worker.fence.snapshot()
+    _ = await worker.scan([deskScreen], session: session)
+    var request = DisplayWrite(key: ControlKey(id: "lg", feature: .brightness), fraction: 0.6, routeIsCurrent: nil)
+    guard case .sentBrightness = await worker.write(request, session: session) else {
+        Issue.record("Brightness write was not sent"); return
+    }
+    request.verifyBrightnessOnly = true
+    guard case let .confirmed(value) = await worker.write(request, session: session) else {
+        Issue.record("A panel that applied the change two reads late was reported as failed"); return
+    }
+    #expect(value == 0.6)
+}

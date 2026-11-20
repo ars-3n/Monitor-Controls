@@ -205,8 +205,18 @@ public final class DisplayController {
         schedule()
     }
 
-    public func refreshValues() {
-        guard isRunning, !sleeping, !isRefreshing else { return }
+    /// Pass `userIsPresent` when the user opened the panel themselves.
+    public func refreshValues(userIsPresent: Bool = false) {
+        guard isRunning else { return }
+        if userIsPresent && sleeping {
+            // Someone is using the screen, so a wake notification never
+            // arrived. Without this the controller stays idle until relaunch.
+            systemSleeping = false
+            screensSleeping = false
+            reconfigure()
+            return
+        }
+        guard !sleeping, !isRefreshing else { return }
         // CoreGraphics can see the screen before the dock creates its DDC
         // service. Reopening the panel must be able to acquire a new handle.
         recovery?.cancel()

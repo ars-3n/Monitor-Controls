@@ -390,6 +390,12 @@ private struct DeviceRow: View {
                 actionButton((route.isHidden ? "Show " : "Hide ") + name, symbol: route.isHidden ? "eye.slash" : "eye") {
                     audio.setHidden(!route.isHidden, for: route)
                 }
+                if route.isConnected {
+                    // Keep the other buttons in the same column on every row.
+                    Color.clear.frame(width: 28, height: 28).accessibilityHidden(true)
+                } else {
+                    actionButton("Forget " + name, symbol: "trash") { audio.forget(route) }
+                }
             }
         }
         .padding(.vertical, 10)

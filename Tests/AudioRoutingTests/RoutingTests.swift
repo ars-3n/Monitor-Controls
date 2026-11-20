@@ -244,3 +244,44 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(output.desired(current: speakers, devices: [display, speakers], rankedIDs: [display.id], time: 0) == display)
     #expect(output.heldID == nil)
 }
+
+@Test func forgettingADisconnectedDeviceRemovesEveryPortItWasSeenOn() throws {
+    var settings = RoutePreferences()
+    let a = microphone(usbA, port: true)
+    let b = microphone(usbB, port: true)
+    let builtin = microphone("builtin")
+    settings.remember([a, builtin])
+    settings.remember([b, builtin])
+    settings.inputOrder = [usbA, "builtin", usbB]
+    let offline = try #require(settings.devices([builtin], role: .input).first { !$0.isConnected })
+    settings.levelsBeforeMute[offline.id] = 0.5
+    settings.inputHold = offline.id
+    settings.outputHold = "output:uid:speakers"
+
+    settings.forget(offline)
+    #expect(settings.records.map(\.uid) == ["builtin"])
+    #expect(settings.inputOrder == ["builtin"])
+    #expect(settings.levelsBeforeMute.isEmpty)
+    #expect(settings.inputHold == nil)
+    #expect(settings.outputHold == "output:uid:speakers")
+    #expect(settings.devices([builtin], role: .input).map(\.uid) == ["builtin"])
+
+    // Seen again, it starts over as a new unranked, visible row.
+    settings.remember([a, builtin])
+    let returned = try #require(settings.devices([a, builtin], role: .input).first { $0.uid == usbA })
+    #expect(!returned.isHidden)
+    #expect(!settings.rankedIDs(for: .input).contains(returned.id))
+}
+
+@Test func forgettingOneRoleKeepsTheSameDevicesOtherRole() throws {
+    var settings = RoutePreferences()
+    let headsetIn = Endpoint(objectID: 1, uid: "headset", name: "Headset", role: .input)
+    let headsetOut = Endpoint(objectID: 1, uid: "headset", name: "Headset", role: .output)
+    settings.remember([headsetIn, headsetOut])
+    settings.inputOrder = ["headset"]
+    settings.outputOrder = ["headset"]
+    settings.forget(try #require(settings.devices([], role: .input).first))
+    #expect(settings.records.map(\.role) == [.output])
+    #expect(settings.inputOrder.isEmpty)
+    #expect(settings.outputOrder == ["headset"])
+}

@@ -167,3 +167,32 @@ private func route(_ uid: String) -> RouteDevice {
     let devices = preferences.devices([first, second], role: .input)
     #expect(devices.count == 2 && devices.allSatisfy(\.isConnected))
 }
+
+@Test func savedPreferencesSurviveMissingFieldsAndOneDamagedRecord() throws {
+    // Written by a build that knew fewer fields, with one record of an unknown role.
+    let saved = Data("""
+    {"records": [{"uid": "usb-a", "name": "Desk DAC", "role": "output", "hidden": true},
+                 {"uid": "future", "name": "Later", "role": "haptics"},
+                 {"uid": "mic-b", "role": "input"}],
+     "outputOrder": ["usb-a"], "outputHold": "output:uid:usb-a", "someLaterField": 3}
+    """.utf8)
+    let preferences = try JSONDecoder().decode(RoutePreferences.self, from: saved)
+    #expect(preferences.records.map(\.uid) == ["usb-a", "mic-b"])
+    #expect(preferences.records[0].hidden == true)
+    #expect(preferences.records[0].hiddenRevision == 0)
+    #expect(preferences.records[1].name == "mic-b")
+    #expect(preferences.outputOrder == ["usb-a"])
+    #expect(preferences.outputHold == "output:uid:usb-a")
+    #expect(preferences.inputOrder.isEmpty)
+    #expect(!preferences.importedLegacy)
+    #expect(preferences.levelsBeforeMute.isEmpty)
+
+    // What this build writes still reads back unchanged.
+    var current = RoutePreferences()
+    current.remember([Endpoint(objectID: 1, uid: "usb-a", name: "Desk DAC", role: .output, followsPort: nil)])
+    current.setHidden(true, device: current.devices([], role: .output)[0])
+    current.levelsBeforeMute["output:uid:usb-a"] = 0.4
+    current.inputHold = "input:uid:mic-b"
+    let copy = try JSONDecoder().decode(RoutePreferences.self, from: JSONEncoder().encode(current))
+    #expect(copy == current)
+}

@@ -358,6 +358,19 @@ struct AudioSnapshot: Sendable {
         if let snapshot { apply(snapshot) }
     }
 
+    /// Only a disconnected device can be forgotten. The next inventory would
+    /// remember a connected one again and lose its place in the list.
+    public func forget(_ device: RouteDevice) {
+        let rows = device.role == .input ? inputs : outputs
+        guard let row = rows.first(where: { $0.id == device.id }), !row.isConnected else { return }
+        let before = preferences
+        preferences.forget(row)
+        if policies[row.role]?.heldID == row.id { policies[row.role]?.heldID = nil }
+        persistIfChanged(since: before)
+        let remaining = preferences.devices(snapshot?.endpoints ?? [], role: row.role)
+        if row.role == .input { inputs = remaining } else { outputs = remaining }
+    }
+
     @discardableResult public func importLegacyPreferences() -> Bool {
         let domain = defaults.persistentDomain(forName: "app.audioprioritybar") ?? [:]
         guard preferences.importLegacy(domain) else {

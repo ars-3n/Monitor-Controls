@@ -127,6 +127,18 @@ struct RoutePreferences: Codable, Equatable {
         records[i].hiddenRevision = revision
     }
 
+    /// Drops everything saved for a device, including the other ports it was
+    /// seen on. It gets a new row with default settings if it connects again.
+    mutating func forget(_ device: RouteDevice) {
+        let aliases = Set(records.filter { $0.role == device.role && identifier($0) == device.id }.map(\.uid))
+        guard !aliases.isEmpty else { return }
+        records.removeAll { $0.role == device.role && aliases.contains($0.uid) }
+        setOrder(order(for: device.role).filter { !aliases.contains($0) }, for: device.role)
+        levelsBeforeMute[device.id] = nil
+        if inputHold == device.id { inputHold = nil }
+        if outputHold == device.id { outputHold = nil }
+    }
+
     mutating func move(_ device: RouteDevice, by offset: Int, in devices: [RouteDevice]) -> Bool {
         guard let index = devices.firstIndex(where: { $0.id == device.id }),
               offset > -devices.count, offset < devices.count, devices.indices.contains(index + offset), offset != 0 else { return false }
@@ -145,6 +157,44 @@ struct RoutePreferences: Codable, Equatable {
         updated += existing.filter { !updated.contains($0) }
         setOrder(updated, for: device.role)
         return true
+    }
+}
+
+// Saved preferences outlive the build that wrote them. Read every field
+// that is present and default the others, so a field added later cannot make
+// an older file unreadable and reset the user's device order.
+extension RememberedRoute {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        uid = try values.decode(String.self, forKey: .uid)
+        role = try values.decode(RouteRole.self, forKey: .role)
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? uid
+        isDisplay = try values.decodeIfPresent(Bool.self, forKey: .isDisplay) ?? false
+        isVirtual = try values.decodeIfPresent(Bool.self, forKey: .isVirtual) ?? false
+        followsPort = try values.decodeIfPresent(Bool.self, forKey: .followsPort)
+        hidden = try values.decodeIfPresent(Bool.self, forKey: .hidden)
+        hiddenRevision = try values.decodeIfPresent(Int.self, forKey: .hiddenRevision) ?? 0
+    }
+}
+
+extension RoutePreferences {
+    /// One damaged record should cost that record, not the whole list.
+    private struct SavedRecord: Decodable {
+        let route: RememberedRoute?
+        init(from decoder: Decoder) throws { route = try? RememberedRoute(from: decoder) }
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        records = try values.decodeIfPresent([SavedRecord].self, forKey: .records)?.compactMap(\.route) ?? []
+        ambiguousFamilies = try values.decodeIfPresent(Set<String>.self, forKey: .ambiguousFamilies) ?? []
+        inputOrder = try values.decodeIfPresent([String].self, forKey: .inputOrder) ?? []
+        outputOrder = try values.decodeIfPresent([String].self, forKey: .outputOrder) ?? []
+        importedLegacy = try values.decodeIfPresent(Bool.self, forKey: .importedLegacy) ?? false
+        inputHold = try values.decodeIfPresent(String.self, forKey: .inputHold)
+        outputHold = try values.decodeIfPresent(String.self, forKey: .outputHold)
+        levelsBeforeMute = try values.decodeIfPresent([String: Double].self, forKey: .levelsBeforeMute) ?? [:]
     }
 }
 

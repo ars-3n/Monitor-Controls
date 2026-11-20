@@ -419,3 +419,27 @@ private final class LaggingChannel: DDCChannel, Sendable {
     }
     #expect(value == 0.6)
 }
+
+/// Drops the first two brightness requests, as a panel can while it wakes.
+private final class DroppingChannel: DDCChannel, Sendable {
+    let brightnessRequests = OSAllocatedUnfairLock(initialState: 0)
+
+    func read(_ feature: Feature) -> [UInt8]? {
+        if feature == .brightness, brightnessRequests.withLock({ $0 += 1; return $0 }) <= 2 { return nil }
+        let bytes: [UInt8] = [0x6e, 0x88, 2, 0, feature.rawValue, 0, 0, 100, 0, feature == .mute ? 2 : 40]
+        return bytes + [bytes.reduce(UInt8(0x50), ^)]
+    }
+
+    func write(_ feature: Feature, value: UInt16) -> Bool { true }
+}
+
+@Test func aThirdReadRecoversAControlAfterTwoDroppedRequests() async {
+    let channel = DroppingChannel()
+    let worker = DisplayWorker(discover: { _ in
+        let display = MonitorDisplay(id: "lg", screenID: 42, name: "LG", brightness: nil, volume: nil, muted: nil)
+        return [Endpoint(display: display, channel: channel, allowsLGQuirk: false, appleBrightness: false)]
+    }, isOnline: { _ in true })
+    let displays = await worker.scan([deskScreen], session: worker.fence.snapshot())
+    #expect(displays.first?.brightness == 0.4)
+    #expect(channel.brightnessRequests.withLock { $0 } == 3)
+}

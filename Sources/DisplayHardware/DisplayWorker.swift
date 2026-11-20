@@ -104,7 +104,10 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             return DDCValue(current: UInt16((value * 10000).rounded()), maximum: 10000)
         }
         guard let channel = endpoint.channel else { return nil }
-        for _ in 0..<2 {
+        // A busy or waking panel can drop a request or answer with a stale
+        // frame. Pause before asking again so it is not the same collision.
+        for attempt in 0..<3 {
+            if attempt > 0 { usleep(20000) }
             guard allowed(), isOnline(endpoint.display.screenID) else { return nil }
             guard let bytes = channel.read(feature) else { continue }
             switch DDCValue.parse(bytes, for: feature, allowsLGQuirk: endpoint.allowsLGQuirk) {

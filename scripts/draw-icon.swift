@@ -1,4 +1,4 @@
-// Run with: swift scripts/draw-icon.swift /tmp/DeskControls.iconset
+// Run with: swift scripts/draw-icon.swift /tmp/MonitorControls.iconset
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers

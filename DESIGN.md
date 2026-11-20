@@ -1,6 +1,6 @@
-# Desk Controls
+# Monitor Controls
 
-Desk Controls is used at arm’s length from an external display, often during a call. Opening the menu should immediately answer which display, output, and microphone a control will change.
+Monitor Controls is used at arm’s length from an external display, often during a call. Opening the menu should immediately answer which display, output, and microphone a control will change.
 
 ## Readability
 

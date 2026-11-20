@@ -4,7 +4,7 @@ import SwiftUI
 
 @main
 @MainActor
-enum DeskControlsApp {
+enum MonitorControlsApp {
     static func main() {
         let id = Bundle.main.bundleIdentifier ?? "com.ars3n.DeskControls"
         let descriptor: Int32
@@ -24,7 +24,7 @@ enum DeskControlsApp {
                 throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
             }
         } catch {
-            NSLog("Could not acquire the Desk Controls startup lock: %@", error.localizedDescription)
+            NSLog("Could not acquire the Monitor Controls startup lock: %@", error.localizedDescription)
             return
         }
         defer { close(descriptor) }
@@ -52,8 +52,8 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         item = status
         if let button = status.button {
             button.image = soundLevelsIcon()
-            button.toolTip = "Desk Controls"
-            button.setAccessibilityLabel("Desk Controls")
+            button.toolTip = "Monitor Controls"
+            button.setAccessibilityLabel("Monitor Controls")
             button.action = #selector(togglePanel)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -104,7 +104,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(.separator())
-        let quit = menu.addItem(withTitle: "Quit Desk Controls", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = menu.addItem(withTitle: "Quit Monitor Controls", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         return menu
     }
@@ -154,7 +154,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: initialSize),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
-            window.title = "Desk Controls Settings"
+            window.title = "Monitor Controls Settings"
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false

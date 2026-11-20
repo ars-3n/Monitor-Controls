@@ -136,7 +136,7 @@ private struct GeneralSettings: View {
                     }
                     .controlSize(.regular)
                     if model.loginApprovalPending {
-                        settingsAction("Allow Desk Controls to open at login in System Settings.",
+                        settingsAction("Allow Monitor Controls to open at login in System Settings.",
                                        button: "Open Login Items…", action: model.openLoginSettings)
                     }
                     if let message = model.loginMessage {

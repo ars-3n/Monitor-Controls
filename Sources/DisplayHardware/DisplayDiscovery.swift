@@ -191,6 +191,7 @@ enum Discovery {
         // Two serial-less monitors can still have distinct Core Graphics UUIDs.
         // Keep their identity stable when either monitor connects or disconnects.
         if screen.serial == 0, let uuid = screen.uuid, !uuid.isEmpty,
+           uuid != "00000000-0000-0000-0000-000000000000",
            same.filter({ $0.uuid == uuid }).count == 1 {
             return ("\(model)-u\(uuid)", true)
         }

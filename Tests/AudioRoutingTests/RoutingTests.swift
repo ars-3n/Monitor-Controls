@@ -56,6 +56,43 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(settings.devices([b], role: .input).count == 2)
 }
 
+@Test func usbIdentityUsesLocationAndSerialDescriptorsWhenVendorNamesAreMissing() {
+    let uid = "AppleUSBAudioEngine:Unknown Manufacturer:Jabra Link 380:00114000:1,2"
+    func classify(_ descriptor: (Int?, String?)?, serialExists: Bool = false) -> Bool? {
+        CoreAudioProperties.isSeriallessUSBDevice(uid: uid, at: 0x00114000, hasSerial: { candidate in
+            #expect(candidate == "00114000")
+            return serialExists
+        }, descriptorAt: { location in
+            #expect(location == 0x00114000)
+            return descriptor
+        })
+    }
+    #expect(classify((0, nil)) == true)
+    #expect(classify((0, "")) == true)
+    #expect(classify((3, nil)) == false)
+    #expect(classify((nil, "serial")) == false)
+    #expect(classify((0, "00114000")) == false)
+    #expect(classify((0, nil), serialExists: true) == false)
+    #expect(classify((nil, nil)) == nil)
+    #expect(classify(nil) == nil)
+}
+
+@Test func genericHDMIOutputsKeepSeparatePrioritiesAndVisibility() throws {
+    let zero = "00000000-0000-0000-0000-000000000000"
+    let old = Endpoint(objectID: 1, uid: zero, name: "HDMI Audio", role: .output, isDisplay: true, followsPort: true)
+    let new = Endpoint(objectID: 2, uid: zero + "_00000020", name: "HDMI Audio", role: .output, isDisplay: true, followsPort: true)
+    var settings = RoutePreferences()
+    settings.remember([old])
+    settings.outputOrder = [old.uid]
+    settings.setHidden(true, device: try #require(settings.devices([old], role: .output).first))
+    settings.remember([new])
+    let rows = settings.devices([new], role: .output)
+    #expect(rows.count == 2)
+    let current = try #require(rows.first { $0.isConnected })
+    #expect(!current.isHidden)
+    #expect(!settings.rankedIDs(for: .output).contains(current.id))
+}
+
 @Test func independentDisplayPortsKeepOneRecoveredRowUntilBothAppear() throws {
     var settings = RoutePreferences()
     func display(_ uid: String) -> Endpoint {

@@ -1,4 +1,4 @@
-name: Release Desk Controls
+name: Release Monitor Controls
 
 on:
   push:
@@ -86,10 +86,10 @@ jobs:
         run: |
           version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
           tag="v$version-${REVISION:0:12}"
-          title="Desk Controls $version (${REVISION:0:7})"
+          title="Monitor Controls $version (${REVISION:0:7})"
           notes="$RUNNER_TEMP/release-notes.md"
           git log -1 --format='%s%n' > "$notes"
-          echo 'Download DeskControls.zip, unzip it, and move Desk Controls.app to Applications. Requires macOS 14 or later. This build has no Developer ID signature or notarization.' >> "$notes"
+          echo 'Download MonitorControls.zip, unzip it, and move Monitor Controls.app to Applications. Requires macOS 14 or later. This build has no Developer ID signature or notarization.' >> "$notes"
 
           # Keep partially uploaded releases in draft so a rerun can finish them.
           if draft=$(gh release view "$tag" --json isDraft --jq .isDraft); then
@@ -97,7 +97,7 @@ jobs:
           else
             gh release create "$tag" --target "$REVISION" --draft --title "$title" --notes-file "$notes"
           fi
-          gh release upload "$tag" dist/DeskControls.zip --clobber
+          gh release upload "$tag" dist/MonitorControls.zip --clobber
           head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
           latest=false
           if [[ "$REVISION" == "$head" ]]; then latest=true; fi

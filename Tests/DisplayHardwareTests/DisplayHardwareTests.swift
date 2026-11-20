@@ -75,6 +75,12 @@ private extension DDCValue {
         #expect(Discovery.stableID(for: before, among: [before]).id == Discovery.stableID(for: after, among: [after]).id)
     }
 
+    @Test func aPlaceholderDisplayUUIDCannotRememberSpeakerPairing() {
+        let generic = ScreenDescription(screenID: 2, name: "Display", vendor: 1, product: 123,
+                                        serial: 0, uuid: "00000000-0000-0000-0000-000000000000", location: nil)
+        #expect(!Discovery.stableID(for: generic, among: [generic]).persistent)
+    }
+
     @Test func sameModelWithoutSerialKeepsUniqueUUIDPairingsWhenADisplayDisconnects() {
         let left = screen(1)
         let right = ScreenDescription(screenID: 2, name: left.name, vendor: left.vendor, product: left.product,

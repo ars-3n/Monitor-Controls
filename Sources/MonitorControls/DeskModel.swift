@@ -202,7 +202,7 @@ final class DeskModel {
     private func refreshKeyboardService() {
         keysAuthorized = AXIsProcessTrusted()
         if running && keysEnabled && keysAuthorized {
-            keyboardMessage = media.start() ? nil : "Keyboard access could not start. Reopen Desk Controls after granting Accessibility access."
+            keyboardMessage = media.start() ? nil : "Keyboard access could not start. Reopen Monitor Controls after granting Accessibility access."
         } else {
             media.stop()
             keyboardMessage = nil

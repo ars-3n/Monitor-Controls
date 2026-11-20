@@ -26,6 +26,7 @@ struct PortIdentity {
         } else {
             let parts = uid.components(separatedBy: "_")
             guard (1...2).contains(parts.count), parts[0].count == 36,
+                  parts[0] != "00000000-0000-0000-0000-000000000000",
                   let uuid = UUID(uuidString: parts[0]) else { return nil }
             if parts.count == 2 {
                 guard parts[1].count == 8, parts[1].allSatisfy(\.isHexDigit) else { return nil }

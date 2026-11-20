@@ -11,7 +11,7 @@ struct PanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Desk Controls")
+                Text("Monitor Controls")
                     .font(DeskType.title)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()

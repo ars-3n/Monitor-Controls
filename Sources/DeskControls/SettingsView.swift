@@ -56,7 +56,10 @@ struct SettingsView: View {
     private var general: some View {
         Form {
             Section("Startup") {
-                Toggle("Open at login", isOn: Binding(get: { model.loginEnabled }, set: model.setLoginEnabled))
+                Toggle("Open at login", isOn: Binding(
+                    get: { model.loginEnabled },
+                    set: { model.setLoginEnabled($0) }
+                ))
                 if let message = model.loginMessage {
                     Text(message)
                         .font(.callout)
@@ -72,7 +75,10 @@ struct SettingsView: View {
                 }
             }
             Section {
-                Toggle("Use Apple brightness and volume keys", isOn: Binding(get: { model.keysEnabled }, set: model.setKeysEnabled))
+                Toggle("Use Apple brightness and volume keys", isOn: Binding(
+                    get: { model.keysEnabled },
+                    set: { model.setKeysEnabled($0) }
+                ))
                 if model.keysEnabled && !model.keysAuthorized {
                     HStack {
                         Text("Accessibility access is required for keyboard control.")

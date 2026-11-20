@@ -25,7 +25,7 @@ struct SettingsView: View {
                 case .general:
                     GeneralSettings(model: model, navigation: navigation)
                 case .outputs, .microphones:
-                    DevicePriorities(audio: model.audio,
+                    DevicePriorities(model: model,
                                      role: navigation.section == .outputs ? .output : .input,
                                      importResult: importResult,
                                      requestImport: { confirmImport = true })
@@ -283,7 +283,8 @@ private struct MonitorPairing: View {
 }
 
 private struct DevicePriorities: View {
-    let audio: AudioController
+    let model: DeskModel
+    private var audio: AudioController { model.audio }
     let role: RouteRole
     let importResult: String?
     let requestImport: () -> Void
@@ -315,7 +316,7 @@ private struct DevicePriorities: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
-                            DeviceRow(audio: audio, route: route, name: names[route.id] ?? route.name,
+                            DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
                                       position: index + 1, count: routes.count, active: route.id == currentID)
                             if index < routes.count - 1 { Divider().accessibilityHidden(true) }
                         }
@@ -348,7 +349,8 @@ private struct DevicePriorities: View {
 }
 
 private struct DeviceRow: View {
-    let audio: AudioController
+    let model: DeskModel
+    private var audio: AudioController { model.audio }
     let route: RouteDevice
     let name: String
     let position: Int
@@ -394,7 +396,7 @@ private struct DeviceRow: View {
                     // Keep the other buttons in the same column on every row.
                     Color.clear.frame(width: 28, height: 28).accessibilityHidden(true)
                 } else {
-                    actionButton("Forget " + name, symbol: "trash") { audio.forget(route) }
+                    actionButton("Forget " + name, symbol: "trash") { model.forget(route) }
                 }
             }
         }

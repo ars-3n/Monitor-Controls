@@ -196,3 +196,44 @@ private func route(_ uid: String) -> RouteDevice {
     let copy = try JSONDecoder().decode(RoutePreferences.self, from: JSONEncoder().encode(current))
     #expect(copy == current)
 }
+
+@Test func damagedPreferenceFieldsPreserveRoutingAndOtherMuteLevels() throws {
+    let saved = Data("""
+    {"records":[{"uid":"speaker","role":"output","hidden":true}],
+     "outputOrder":["speaker"], "outputHold":"output:uid:speaker",
+     "inputOrder":false, "levelsBeforeMute":{"usb":0.72,"bad":"unknown","invalid":8}}
+    """.utf8)
+    let preferences = try JSONDecoder().decode(RoutePreferences.self, from: saved)
+    #expect(preferences.inputOrder.isEmpty)
+    #expect(preferences.outputOrder == ["speaker"])
+    #expect(preferences.outputHold == "output:uid:speaker")
+    #expect(preferences.records.first?.hidden == true)
+    #expect(preferences.levelsBeforeMute == ["usb": 0.72])
+}
+
+private func savedMicOnTwoPorts(ambiguousFamilies: String) throws -> RoutePreferences {
+    let saved = Data("""
+    {"ambiguousFamilies":\(ambiguousFamilies),"records":[
+      {"uid":"AppleUSBAudioEngine:Maker:Mic:01000000:1","role":"input","followsPort":true},
+      {"uid":"AppleUSBAudioEngine:Maker:Mic:02000000:1","role":"input","followsPort":true}
+    ]}
+    """.utf8)
+    return try JSONDecoder().decode(RoutePreferences.self, from: saved)
+}
+
+@Test func damagedAmbiguityHistoryKeepsItsReadableEntries() throws {
+    let preferences = try savedMicOnTwoPorts(ambiguousFamilies: #"["AppleUSBAudioEngine:Maker:Mic",5]"#)
+    #expect(preferences.ambiguousFamilies == ["AppleUSBAudioEngine:Maker:Mic"])
+    #expect(preferences.devices([], role: .input).count == 2)
+}
+
+@Test func unreadableAmbiguityHistoryDoesNotSplitOneDeviceByPort() throws {
+    var preferences = try savedMicOnTwoPorts(ambiguousFamilies: "false")
+    #expect(preferences.devices([], role: .input).count == 1)
+    // Seeing both ports in use at once shows there are two devices.
+    let both = ["01000000", "02000000"].enumerated().map { index, port in
+        Endpoint(objectID: UInt32(index + 1), uid: "AppleUSBAudioEngine:Maker:Mic:\(port):1", name: "Mic", role: .input, followsPort: true)
+    }
+    preferences.remember(both)
+    #expect(preferences.devices(both, role: .input).count == 2)
+}

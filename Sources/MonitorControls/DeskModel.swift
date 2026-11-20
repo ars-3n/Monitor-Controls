@@ -67,7 +67,10 @@ final class DeskModel {
     }
 
     func openedPanel() {
+        // Show current levels at once. The device read below repeats this
+        // when it finishes, which can be a moment later.
         audio.refreshLevels()
+        audio.refresh()
         display.refreshValues(userIsPresent: true)
         refreshKeyboardService()
     }
@@ -105,6 +108,14 @@ final class DeskModel {
     private func invalidateSpeakerControls() {
         media.cancelAdjustments(audioOnly: true)
         display.cancelPendingAudioWrites()
+    }
+
+    func forget(_ device: RouteDevice) {
+        guard audio.forget(device), device.role == .output else { return }
+        sessionPairs[device.id] = nil
+        if savedPairs.removeValue(forKey: device.id) != nil {
+            defaults.set(savedPairs, forKey: "displayVolumePairs")
+        }
     }
 
     func setVolumeDisplay(_ id: String?) {

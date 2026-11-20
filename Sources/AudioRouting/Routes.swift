@@ -178,23 +178,29 @@ extension RememberedRoute {
 }
 
 extension RoutePreferences {
-    /// One damaged record should cost that record, not the whole list.
-    private struct SavedRecord: Decodable {
-        let route: RememberedRoute?
-        init(from decoder: Decoder) throws { route = try? RememberedRoute(from: decoder) }
+    private struct SavedValue<Value: Decodable>: Decodable {
+        let value: Value?
+        init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init()
-        records = try values.decodeIfPresent([SavedRecord].self, forKey: .records)?.compactMap(\.route) ?? []
-        ambiguousFamilies = try values.decodeIfPresent(Set<String>.self, forKey: .ambiguousFamilies) ?? []
-        inputOrder = try values.decodeIfPresent([String].self, forKey: .inputOrder) ?? []
-        outputOrder = try values.decodeIfPresent([String].self, forKey: .outputOrder) ?? []
-        importedLegacy = try values.decodeIfPresent(Bool.self, forKey: .importedLegacy) ?? false
-        inputHold = try values.decodeIfPresent(String.self, forKey: .inputHold)
-        outputHold = try values.decodeIfPresent(String.self, forKey: .outputHold)
-        levelsBeforeMute = try values.decodeIfPresent([String: Double].self, forKey: .levelsBeforeMute) ?? [:]
+        records = (try? values.decode([SavedValue<RememberedRoute>].self, forKey: .records))?.compactMap(\.value) ?? []
+        // Keep the entries that can be read. Two identical devices are told
+        // apart again the next time both are connected.
+        let families = try? values.decode([SavedValue<String>].self, forKey: .ambiguousFamilies)
+        ambiguousFamilies = Set(families?.compactMap(\.value) ?? [])
+        inputOrder = (try? values.decode([SavedValue<String>].self, forKey: .inputOrder))?.compactMap(\.value) ?? []
+        outputOrder = (try? values.decode([SavedValue<String>].self, forKey: .outputOrder))?.compactMap(\.value) ?? []
+        importedLegacy = (try? values.decode(Bool.self, forKey: .importedLegacy)) ?? false
+        inputHold = try? values.decode(String.self, forKey: .inputHold)
+        outputHold = try? values.decode(String.self, forKey: .outputHold)
+        let savedLevels = (try? values.decode([String: SavedValue<Double>].self, forKey: .levelsBeforeMute)) ?? [:]
+        levelsBeforeMute = savedLevels.compactMapValues { entry in
+            guard let level = entry.value, (0...1).contains(level) else { return nil }
+            return level
+        }
     }
 }
 

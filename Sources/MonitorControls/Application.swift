@@ -172,6 +172,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             }
             settingsWindow = window
         }
+        model.audio.refresh()
         model.refreshServices()
         NSApp.activate()
         if settingsWindow?.isMiniaturized == true { settingsWindow?.deminiaturize(nil) }

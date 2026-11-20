@@ -13,6 +13,7 @@ final class DeskModel {
     let updates = UpdateModel()
     private let defaults: UserDefaults
     @ObservationIgnored private let media = MediaKeys()
+    @ObservationIgnored private let overlay = LevelOverlay()
     @ObservationIgnored private var placements: [DisplayPlacement]?
     private var savedPairs: [String: String]
     private var sessionPairs: [String: String] = [:]
@@ -188,9 +189,12 @@ final class DeskModel {
         switch key {
         case .brightnessUp, .brightnessDown:
             guard let current = screen.brightness else { return }
-            display.setBrightness(min(1, max(0, current + (key == .brightnessUp ? step : -step))), for: id)
+            let value = min(1, max(0, current + (key == .brightnessUp ? step : -step)))
+            display.setBrightness(value, for: id)
+            overlay.show(brightness: value, onScreen: screen.screenID)
         case .volumeUp, .volumeDown:
             guard let current = screen.volume else { return }
+            // No overlay here: monitors show their own for volume and mute.
             setSpeakerVolume(min(1, max(0, current + (key == .volumeUp ? step : -step))), on: screen)
         case .mute:
             if let muted = screen.muted { setSpeakerMuted(!muted, on: screen) }

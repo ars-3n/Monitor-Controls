@@ -1,0 +1,77 @@
+name: Release Desk Controls
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  commits:
+    runs-on: ubuntu-latest
+    outputs:
+      revisions: ${{ steps.list.outputs.revisions }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: List commits added to main
+        id: list
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          range="$GITHUB_SHA"
+          if [[ "$BEFORE" != 0000000000000000000000000000000000000000 ]]; then
+            git cat-file -e "$BEFORE^{commit}" || git fetch origin "$BEFORE"
+            range="$BEFORE..$GITHUB_SHA"
+          fi
+          revisions=$(git rev-list --reverse "$range" | jq -Rsc 'split("\n") | map(select(length > 0))')
+          echo "revisions=$revisions" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: commits
+    if: needs.commits.outputs.revisions != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        revision: ${{ fromJSON(needs.commits.outputs.revisions) }}
+    name: Release ${{ matrix.revision }}
+    runs-on: macos-26
+    permissions:
+      contents: write
+    concurrency: release-${{ matrix.revision }}
+    env:
+      REVISION: ${{ matrix.revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.revision }}
+          persist-credentials: false
+      - name: Test
+        run: swift test
+      - name: Build universal app
+        run: ./scripts/build.sh
+      - name: Publish ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
+          tag="v$version-${REVISION:0:12}"
+          title="Desk Controls $version (${REVISION:0:7})"
+          notes="$RUNNER_TEMP/release-notes.md"
+          git log -1 --format='%s%n' > "$notes"
+          echo 'Download DeskControls.zip, unzip it, and move Desk Controls.app to Applications. Requires macOS 14 or later. This build has no Developer ID signature or notarization.' >> "$notes"
+
+          # Keep partially uploaded releases in draft so a rerun can finish them.
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft); then
+            if [[ "$draft" == false ]]; then exit 0; fi
+          else
+            gh release create "$tag" --target "$REVISION" --draft --title "$title" --notes-file "$notes"
+          fi
+          gh release upload "$tag" dist/DeskControls.zip --clobber
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          latest=false
+          if [[ "$REVISION" == "$head" ]]; then latest=true; fi
+          gh release edit "$tag" --draft=false --latest="$latest"

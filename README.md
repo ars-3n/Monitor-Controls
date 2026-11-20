@@ -4,7 +4,7 @@ A native macOS menu-bar app for external display brightness, speaker volume, and
 
 ## Use
 
-Unzip `DeskControls.zip`, drag **Desk Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires macOS 14 or later.
+Download [DeskControls.zip from the latest release](https://github.com/ars-3n/MacOS-External-Monitor-Controls/releases/latest/download/DeskControls.zip), unzip it, drag **Desk Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires macOS 14 or later.
 
 - **Brightness** adjusts the selected display’s hardware brightness. Apple brightness keys adjust the display beneath the pointer.
 - **Volume and mute** follow the current system sound output. Compatible monitor speakers use DDC/CI. AirPods and other system-adjustable outputs use macOS audio controls. When headphones disconnect, Desk Controls leaves the monitor at its existing volume.
@@ -25,7 +25,7 @@ swift test
 ./scripts/build.sh
 ```
 
-The build script produces a universal Apple silicon and Intel app in `dist/DeskControls.zip`. Development builds have no Developer ID signature or notarization.
+The build script produces a universal Apple silicon and Intel app in `dist/DeskControls.zip`. GitHub Actions tests and packages each commit added to `main`, then publishes the ZIP in a release tagged with the app version and commit hash. These builds have no Developer ID signature or notarization.
 
 Normal tests use fixtures. On a Mac with exactly one LG ULTRAWIDE, an explicit hardware check reads the starting brightness, volume and mute, tests small changes, restores the originals, and verifies them. It briefly mutes the monitor if it was initially unmuted.
 

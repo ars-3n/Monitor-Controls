@@ -183,6 +183,9 @@ final class DeskModel {
         }
     }
 
+    /// The brightness indicator appears under this view, the menu-bar icon.
+    func anchorIndicator(to view: NSView) { overlay.anchor = view }
+
     private func adjust(_ key: DeskKey, id: String, fine: Bool) {
         guard let screen = display.displays.first(where: { $0.id == id }) else { return }
         let step = fine ? 1.0 / 64 : 1.0 / 16

@@ -58,6 +58,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             button.action = #selector(togglePanel)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            model.anchorIndicator(to: button)
         }
         popover.behavior = .transient
         popover.animates = false

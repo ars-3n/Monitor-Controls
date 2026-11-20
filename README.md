@@ -36,7 +36,7 @@ Coming from Desk Controls? Quit it and move it out of Applications first. Your d
 **General** has these settings:
 
 - Open at login.
-- Use the Apple brightness and volume keys. Brightness keys act on the display under the pointer. A small indicator under the menu bar shows the new brightness. This needs access in **System Settings → Privacy & Security → Accessibility**. If you also run MonitorControl, turn off its key handling so one app handles each keypress.
+- Use the Apple brightness and volume keys. Brightness keys act on the display under the pointer. A small indicator under the menu-bar icon shows the new brightness. This needs access in **System Settings → Privacy & Security → Accessibility**. If you also run MonitorControl, turn off its key handling so one app handles each keypress.
 - Check for Updates. The app looks for a newer release on GitHub only when you press the button. **Install and Relaunch** then replaces the app with the new version.
 
 When a monitor's speakers are the active output, General also shows which display the volume slider controls. Change it when two displays share a name or the output and display names differ.

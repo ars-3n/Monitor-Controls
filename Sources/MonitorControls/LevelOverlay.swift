@@ -15,6 +15,9 @@ final class LevelOverlay {
     private static let size = NSSize(width: 252, height: 52)
     private static let visibleFor: Duration = .milliseconds(1300)
 
+    /// The menu-bar icon. The indicator appears under it.
+    weak var anchor: NSView?
+
     private let content = Content()
     private var panel: NSPanel?
     private var hiding: Task<Void, Never>?
@@ -27,9 +30,8 @@ final class LevelOverlay {
         let panel = panel ?? makePanel()
         self.panel = panel
 
-        // Below the menu bar at the trailing edge, where macOS puts its own.
         let area = screen.visibleFrame
-        panel.setFrame(NSRect(x: area.maxX - Self.size.width - 12, y: area.maxY - Self.size.height - 10,
+        panel.setFrame(NSRect(x: originX(on: screen), y: area.maxY - Self.size.height - 10,
                               width: Self.size.width, height: Self.size.height), display: true)
         if !panel.isVisible {
             panel.alphaValue = 0
@@ -50,6 +52,19 @@ final class LevelOverlay {
             }
             if !Task.isCancelled { panel.orderOut(nil) }
         }
+    }
+
+    /// Centers the indicator under the menu-bar icon. Another display's menu bar
+    /// shows the icon at the same distance from its trailing edge. Without an
+    /// icon on screen the indicator sits at the trailing edge.
+    private func originX(on screen: NSScreen) -> CGFloat {
+        let area = screen.visibleFrame
+        let margin = 12.0
+        let trailing = area.maxX - Self.size.width - margin
+        guard let anchor, let window = anchor.window, let home = window.screen else { return trailing }
+        let icon = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        let centre = screen.frame.maxX - (home.frame.maxX - icon.midX)
+        return min(trailing, max(area.minX + margin, centre - Self.size.width / 2))
     }
 
     private func makePanel() -> NSPanel {

@@ -123,6 +123,8 @@ private actor TestDisplayIO: DisplayIO {
     var sent: [ControlKey] = []
     var display = MonitorDisplay(id: "lg", screenID: 42, name: "LG", brightness: 0.25, volume: 0.18, muted: false)
 
+    func changeOnTheMonitor(brightness: Double) { display.apply(brightness, to: .brightness) }
+
     var additionalDisplays: [MonitorDisplay] = []
     var scanCount = 0
     var scansWithoutControls = 0
@@ -168,6 +170,36 @@ private actor TestDisplayIO: DisplayIO {
     #expect(controller.displays.first?.brightness == 1)
     #expect(controller.displays.first?.volume == 0.18)
     #expect(controller.displays.first?.muted == false)
+}
+
+@MainActor @Test func aStepStartsFromTheLevelTheMonitorHasNow() async {
+    let worker = TestDisplayIO()
+    let controller = DisplayController(worker: worker, staleAfter: .zero) { [deskScreen] }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.brightness == 0.25)
+    await worker.changeOnTheMonitor(brightness: 0.5)
+    for _ in 1...2 {
+        controller.withCurrentLevels {
+            controller.setBrightness((controller.displays.first?.brightness ?? 0) + 0.1, for: "lg")
+        }
+    }
+    #expect(await worker.sent.isEmpty)
+    await controller.waitUntilIdle()
+    #expect(abs((controller.displays.first?.brightness ?? 0) - 0.7) < 0.001)
+    #expect(abs((await worker.display.brightness ?? 0) - 0.7) < 0.001)
+}
+
+@MainActor @Test func aRecentReadingIsUsedWithoutAnotherRead() async {
+    let worker = TestDisplayIO()
+    let controller = DisplayController(worker: worker) { [deskScreen] }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    var ran = false
+    controller.withCurrentLevels { ran = true }
+    #expect(ran)
 }
 
 private let deskScreen = ScreenDescription(screenID: 42, name: "LG", vendor: 1, product: 123, serial: 567,

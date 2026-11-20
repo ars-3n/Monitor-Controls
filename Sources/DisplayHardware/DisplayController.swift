@@ -81,19 +81,25 @@ public final class DisplayController {
     @ObservationIgnored private var pump: Task<Void, Never>?
     @ObservationIgnored private var brightnessChecks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var settle: Task<Void, Never>?
+    @ObservationIgnored private let staleAfter: Duration
+    @ObservationIgnored private var synced: ContinuousClock.Instant?
+    @ObservationIgnored private var waiting: [@MainActor () -> Void] = []
 
     public init() {
         worker = DisplayWorker()
         observesSystemEvents = true
         screens = ScreenDescription.collect
         recoveryDelays = [.milliseconds(700), .seconds(2)]
+        staleAfter = .seconds(10)
     }
 
-    init(worker: any DisplayIO, recoveryDelays: [Duration] = [], screens: @escaping @MainActor () -> [ScreenDescription]) {
+    init(worker: any DisplayIO, recoveryDelays: [Duration] = [], staleAfter: Duration = .seconds(10),
+         screens: @escaping @MainActor () -> [ScreenDescription]) {
         self.worker = worker
         observesSystemEvents = false
         self.screens = screens
         self.recoveryDelays = recoveryDelays
+        self.staleAfter = staleAfter
     }
 
     isolated deinit { stop() }
@@ -171,6 +177,8 @@ public final class DisplayController {
         brightnessChecks.removeAll()
         writes.removeAll()
         writeOrder.removeAll()
+        waiting.removeAll()
+        synced = nil
         scanPending = false
         readPending = false
         for display in displays where !display.canRememberPairing { knownFeatures.removeValue(forKey: display.id) }
@@ -274,6 +282,23 @@ public final class DisplayController {
         }
     }
 
+    /// Runs `change` against levels read from the monitor recently. The
+    /// monitor's own buttons, or another computer on a second input, may have
+    /// moved them since the last read, so an old reading is refreshed first.
+    public func withCurrentLevels(_ change: @escaping @MainActor () -> Void) {
+        guard isRunning, !sleeping, !isRefreshing, !displays.isEmpty,
+              synced.map({ $0.duration(to: .now) >= staleAfter }) ?? true else { return change() }
+        waiting.append(change)
+        readPending = true
+        schedule()
+    }
+
+    private func resumeWaiting() {
+        let changes = waiting
+        waiting.removeAll()
+        for change in changes { change() }
+    }
+
     public func dismissError() {
         failedKey = nil
         lastError = nil
@@ -299,6 +324,7 @@ public final class DisplayController {
         if writes[key] == nil { writeOrder.append(key) }
         writes[key] = DisplayWrite(key: key, fraction: bounded, routeIsCurrent: routeIsCurrent)
         displays[index].apply(bounded, to: feature)
+        synced = .now
         schedule()
     }
 
@@ -323,7 +349,11 @@ public final class DisplayController {
     }
 
     private func drain() async {
-        defer { pump = nil }
+        // A read that never ran must not strand the changes waiting for it.
+        defer {
+            pump = nil
+            resumeWaiting()
+        }
         while isRunning && !sleeping {
             let session = worker.fence.snapshot()
             if scanPending {
@@ -334,7 +364,9 @@ public final class DisplayController {
                     confirmed = Dictionary(uniqueKeysWithValues: result.map { ($0.id, $0) })
                     displays = result
                     isRefreshing = false
+                    synced = .now
                     didRead(result)
+                    resumeWaiting()
                 }
             } else if let key = writeOrder.first {
                 writeOrder.removeFirst()
@@ -387,7 +419,9 @@ public final class DisplayController {
                     for (key, request) in writes where key.id == display.id { updated.apply(request.fraction, to: key.feature) }
                     return updated
                 }
+                synced = .now
                 didRead(result)
+                resumeWaiting()
             } else {
                 return
             }

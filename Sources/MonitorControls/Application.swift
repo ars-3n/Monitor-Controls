@@ -183,7 +183,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         popover.performClose(nil)
         settingsNavigation.open(destination)
         if settingsWindow == nil {
-            let initialSize = NSSize(width: 730, height: 510)
+            let initialSize = NSSize(width: 900, height: 540)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: initialSize),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
@@ -197,10 +197,12 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             // should scroll its content without resizing the user's window.
             host.sizingOptions = []
             window.contentViewController = host
-            window.contentMinSize = NSSize(width: 625, height: 420)
+            // Wide enough for the two device lists to stand side by side.
+            window.contentMinSize = NSSize(width: 820, height: 420)
             window.setContentSize(initialSize)
-            window.setFrameAutosaveName("DeskControlsSettings")
-            if !window.setFrameUsingName("DeskControlsSettings") ||
+            // A new name, so a frame saved for the narrower window is not restored.
+            window.setFrameAutosaveName("MonitorControlsSettings")
+            if !window.setFrameUsingName("MonitorControlsSettings") ||
                 !NSScreen.screens.contains(where: { $0.visibleFrame.contains(CGPoint(x: window.frame.midX, y: window.frame.maxY - 12)) }) {
                 window.center()
             }

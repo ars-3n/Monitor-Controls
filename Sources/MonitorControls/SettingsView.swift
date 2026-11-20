@@ -20,12 +20,8 @@ struct SettingsView: View {
             )) {
                 Label("General", systemImage: "gearshape")
                     .tag(SettingsSection.general)
-                Section("Device priority") {
-                    Label("Outputs", systemImage: "speaker.wave.2")
-                        .tag(SettingsSection.outputs)
-                    Label("Microphones", systemImage: "mic")
-                        .tag(SettingsSection.microphones)
-                }
+                Label("Devices", systemImage: "headphones")
+                    .tag(SettingsSection.devices)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 230)
             .toolbar(removing: .sidebarToggle)
@@ -35,10 +31,8 @@ struct SettingsView: View {
                 switch navigation.section {
                 case .general:
                     GeneralSettings(model: model, navigation: navigation)
-                case .outputs, .microphones:
-                    DevicePriorities(model: model,
-                                     role: navigation.section == .outputs ? .output : .input,
-                                     importResult: importResult,
+                case .devices:
+                    DevicePriorities(model: model, importResult: importResult,
                                      requestImport: { confirmImport = true })
                 }
             }
@@ -76,8 +70,7 @@ struct SettingsView: View {
     private var sectionTitle: String {
         switch navigation.section {
         case .general: "General"
-        case .outputs: "Outputs"
-        case .microphones: "Microphones"
+        case .devices: "Devices"
         }
     }
 }
@@ -324,78 +317,121 @@ private struct MonitorPairing: View {
     }
 }
 
+/// Outputs and microphones side by side. The two lists share one scroll
+/// view, so the page moves as a whole.
 private struct DevicePriorities: View {
     let model: DeskModel
-    private var audio: AudioController { model.audio }
-    let role: RouteRole
     let importResult: String?
     let requestImport: () -> Void
 
+    /// A grouped form insets its cards by this much on each side.
+    private static let edge: CGFloat = 20
+    /// How far each column moves toward the other, so the gap between the
+    /// cards is narrower than two form insets.
+    private static let overlap: CGFloat = 12
+
     var body: some View {
+        let audio = model.audio
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // Above the lists, so it is read before the numbers and
+                // stays in view however long the lists are.
+                Text("Automatic switching prefers devices higher in each list. Hidden devices are skipped.")
+                    .font(DeskType.body)
+                    .foregroundStyle(.secondary)
+                    .settingsFooter()
+                    .padding(.horizontal, Self.edge + 10)
+                    .padding(.top, 14)
+                HStack(alignment: .top, spacing: 0) {
+                    DeviceColumn(model: model, role: .output)
+                        .padding(.trailing, -Self.overlap)
+                    DeviceColumn(model: model, role: .input)
+                        .padding(.leading, -Self.overlap)
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    if audio.canImportLegacyPreferences {
+                        Button(action: requestImport) {
+                            Text("Import from Audio Priority Bar…").font(DeskType.control)
+                        }
+                        .controlSize(.regular)
+                    }
+                    if let importResult {
+                        Text(importResult)
+                            .foregroundStyle(.secondary)
+                            .settingsFooter()
+                    }
+                }
+                .font(DeskType.body)
+                // Lines up with the text inside the cards above.
+                .padding(.horizontal, Self.edge + 10)
+                .padding(.bottom, 20)
+            }
+            // The General page's cards start this much further in.
+            .padding(.horizontal, 6)
+        }
+    }
+}
+
+/// One role's devices: the numbered list, then the hidden ones.
+private struct DeviceColumn: View {
+    let model: DeskModel
+    let role: RouteRole
+
+    var body: some View {
+        let audio = model.audio
         let routes = role == .input ? audio.inputs : audio.outputs
         let currentID = role == .input ? audio.input?.id : audio.output?.id
         let names = routeLabels(for: routes)
         let shown = routes.filter { !$0.isHidden }
         let hidden = routes.filter(\.isHidden)
+        let title = role == .input ? "Microphones" : "Outputs"
 
-        if routes.isEmpty && !audio.canImportLegacyPreferences && importResult == nil {
-            ContentUnavailableView {
-                Label(role == .input ? "No saved microphones" : "No saved outputs",
-                      systemImage: role == .input ? "mic" : "speaker.wave.2")
-            } description: {
-                Text("Connect a device to add it to this list.")
+        Form {
+            Section {
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, route in
+                    DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
+                              position: index + 1, count: shown.count, active: route.id == currentID)
+                }
+                if shown.isEmpty {
+                    Text(routes.isEmpty ? "Connect a device to add it to this list." : "Every device is hidden.")
+                        .font(DeskType.body)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                HStack(spacing: 6) {
+                    // One box for both symbols keeps the two titles on a line.
+                    Image(systemName: role == .input ? "mic" : "speaker.wave.2")
+                        .frame(width: 22, height: 18)
+                        .accessibilityHidden(true)
+                    Text(title)
+                }
+                .font(DeskType.device)
             }
-        } else {
-            Form {
-                if !routes.isEmpty {
-                    Section {
-                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, route in
-                            DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
-                                      position: index + 1, count: shown.count, active: route.id == currentID)
-                        }
-                        if shown.isEmpty {
-                            Text("Every device is hidden.")
-                                .font(DeskType.body)
-                                .foregroundStyle(.secondary)
-                        }
-                    } footer: {
-                        Text("Automatic switching prefers devices higher in this list. Hidden devices are skipped.")
-                            .font(DeskType.body)
-                            .foregroundStyle(.secondary)
-                            .settingsFooter()
+            if !hidden.isEmpty {
+                // Hidden devices take no part in automatic switching,
+                // so they have no priority number or arrows.
+                Section {
+                    ForEach(hidden, id: \.id) { route in
+                        DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
+                                  position: nil, count: 0, active: route.id == currentID)
                     }
-                }
-                if !hidden.isEmpty {
-                    // Hidden devices take no part in automatic switching,
-                    // so they have no priority number or arrows.
-                    Section {
-                        ForEach(hidden, id: \.id) { route in
-                            DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
-                                      position: nil, count: 0, active: route.id == currentID)
-                        }
-                    } header: {
-                        Text("Hidden").font(DeskType.device)
-                    }
-                }
-                if audio.canImportLegacyPreferences || importResult != nil {
-                    Section {
-                        if audio.canImportLegacyPreferences {
-                            Button(action: requestImport) {
-                                Text("Import from Audio Priority Bar…").font(DeskType.control)
-                            }
-                            .controlSize(.regular)
-                        }
-                        if let importResult {
-                            Text(importResult)
-                                .font(DeskType.body)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                } header: {
+                    // Quieter than the column title it sits under.
+                    Text("Hidden")
+                        .font(DeskType.control)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Hidden \(title.lowercased())")
                 }
             }
-            .formStyle(.grouped)
-            .id(role)
         }
+        .formStyle(.grouped)
+        // The page scrolls both columns together.
+        .scrollDisabled(true)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
     }
 }
 
@@ -432,14 +468,14 @@ private struct DeviceRow: View {
                             .foregroundStyle(.tint)
                             .accessibilityHidden(true)
                     }
-                    Text(status)
+                    Text(status).lineLimit(1)
                 }
                 .font(DeskType.body)
                 .foregroundStyle(.secondary)
             }
             Spacer(minLength: 2)
 
-            HStack(spacing: 2) {
+            HStack(spacing: 0) {
                 // Forget sits first, so the other buttons keep their columns
                 // and the eye stays at the trailing edge on every row.
                 if !route.isConnected {
@@ -467,7 +503,7 @@ private struct DeviceRow: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(DeskType.control)
-                .frame(width: 28, height: 28)
+                .frame(width: 26, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)

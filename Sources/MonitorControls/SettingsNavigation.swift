@@ -5,7 +5,7 @@ enum SettingsDestination {
 }
 
 enum SettingsSection: CaseIterable {
-    case general, outputs, microphones
+    case general, devices
 }
 
 @MainActor @Observable

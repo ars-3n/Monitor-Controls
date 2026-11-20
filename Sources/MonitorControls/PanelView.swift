@@ -331,8 +331,7 @@ private struct RouteRow: View {
         Button(action: choose) {
             RouteRowLabel(name: name, symbol: symbol, selected: selected)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(selected ? AnyShapeStyle(Color.accentColor.opacity(0.22))
-                          : AnyShapeStyle(.primary.opacity(hovered ? 0.08 : 0))))
+                    .fill(.primary.opacity(hovered && !selected ? 0.08 : 0)))
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
@@ -351,23 +350,22 @@ private struct RouteRowLabel: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // The active device has its icon on the accent color, as in Control Center.
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 20)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary.opacity(0.1))))
                 .accessibilityHidden(true)
             Text(name)
                 .font(selected ? DeskType.control : DeskType.body)
+                .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            if selected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .accessibilityHidden(true)
-            }
         }
         .padding(.horizontal, Self.inset)
-        .frame(height: 26)
+        .frame(height: 28)
         .contentShape(Rectangle())
     }
 }

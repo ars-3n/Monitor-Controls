@@ -1,10 +1,34 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 @main
 @MainActor
 enum DeskControlsApp {
     static func main() {
+        let id = Bundle.main.bundleIdentifier ?? "com.ars3n.DeskControls"
+        let descriptor: Int32
+        do {
+            let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                      appropriateFor: nil, create: true)
+            let path = support.appendingPathComponent(id + ".instance-lock").path
+            // Open and lock atomically. Keep the file in place so every launch locks the same inode.
+            descriptor = open(path, O_CREAT | O_RDWR | O_EXLOCK | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW, 0o600)
+            if descriptor == -1 {
+                let code = errno
+                if code == EWOULDBLOCK {
+                    NSRunningApplication.runningApplications(withBundleIdentifier: id)
+                        .first { !$0.isTerminated && $0.processIdentifier != getpid() }?.activate()
+                    return
+                }
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+            }
+        } catch {
+            NSLog("Could not acquire the Desk Controls startup lock: %@", error.localizedDescription)
+            return
+        }
+        defer { close(descriptor) }
+
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let delegate = DeskDelegate()
@@ -23,19 +47,6 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
     private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Concurrent launches must agree on which instance owns the hardware.
-        if let id = Bundle.main.bundleIdentifier,
-           let other = NSRunningApplication.runningApplications(withBundleIdentifier: id)
-            .filter({ !$0.isTerminated })
-            .min(by: { lhs, rhs in
-                let left = lhs.launchDate ?? .distantPast
-                let right = rhs.launchDate ?? .distantPast
-                return left == right ? lhs.processIdentifier < rhs.processIdentifier : left < right
-            }), other.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            other.activate()
-            NSApp.terminate(nil)
-            return
-        }
         let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item = status
         if let button = status.button {

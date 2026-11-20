@@ -46,6 +46,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     private var settingsWindow: NSWindow?
     private let settingsNavigation = SettingsNavigation()
     private var wakeObserver: NSObjectProtocol?
+    private var outsideClickMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -70,6 +71,8 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         let fileItem = menu.addItem(withTitle: "File", action: nil, keyEquivalent: "")
         fileItem.submenu = fileMenu
         NSApp.mainMenu = menu
+        NotificationCenter.default.addObserver(self, selector: #selector(windowResignedKey(_:)),
+                                               name: NSWindow.didResignKeyNotification, object: nil)
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -82,7 +85,11 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         model.refreshServices(checkLogin: settingsWindow?.isVisible == true)
     }
     func applicationDidChangeScreenParameters(_ notification: Notification) { model.screenParametersChanged() }
-    func popoverDidClose(_ notification: Notification) { model.closedPanel() }
+    func popoverDidClose(_ notification: Notification) {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        outsideClickMonitor = nil
+        model.closedPanel()
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if let window = settingsWindow, window.isVisible || window.isMiniaturized {
@@ -140,6 +147,32 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             }
         }
         panel.makeKey()
+        watchOutsideClicks()
+    }
+
+    /// Once a device menu has been open in the panel, the popover stays up
+    /// when focus moves elsewhere. Close it here in every case.
+    @objc private func windowResignedKey(_ notification: Notification) {
+        guard popover.isShown, let window = notification.object as? NSWindow,
+              window === popover.contentViewController?.view.window,
+              // An open device menu must not close the panel under it.
+              RunLoop.current.currentMode != .eventTracking else { return }
+        closePanel()
+    }
+
+    private func closePanel() {
+        popover.performClose(nil)
+        if popover.isShown { popover.close() }
+    }
+
+    private func watchOutsideClicks() {
+        guard outsideClickMonitor == nil else { return }
+        // Covers clicks that leave the panel focused, such as on the menu bar.
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closePanel() }
+        }
     }
 
     @objc private func showSettings() {

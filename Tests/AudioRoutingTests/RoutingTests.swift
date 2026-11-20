@@ -182,6 +182,51 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(policy.desired(current: after.first, devices: after, rankedIDs: Set(after.map(\.id)), time: 1)?.uid == "c")
 }
 
+@Test func reorderStepsOverHiddenDevices() throws {
+    var settings = RoutePreferences()
+    let a = microphone("a"), b = microphone("b"), c = microphone("c")
+    settings.remember([a, b, c])
+    settings.inputOrder = ["a", "b", "c"]
+    settings.setHidden(true, device: try #require(settings.devices([a, b, c], role: .input).first { $0.uid == "b" }))
+
+    var rows = settings.devices([a, b, c], role: .input)
+    let step1 = settings.move(try #require(rows.last), by: -1, in: rows)
+    #expect(step1)
+    #expect(settings.inputOrder == ["c", "a", "b"])
+
+    rows = settings.devices([a, b, c], role: .input)
+    let step2 = settings.move(try #require(rows.first), by: 1, in: rows)
+    #expect(step2)
+    #expect(settings.inputOrder == ["a", "c", "b"])
+
+    // Two visible rows leave nowhere further to go.
+    rows = settings.devices([a, b, c], role: .input)
+    let step3 = settings.move(try #require(rows.first { $0.uid == "c" }), by: 1, in: rows)
+    #expect(!step3)
+    let step4 = settings.move(try #require(rows.first { $0.uid == "a" }), by: -1, in: rows)
+    #expect(!step4)
+    #expect(settings.inputOrder == ["a", "c", "b"])
+}
+
+@Test func hiddenDeviceCannotBeReorderedAndReturnsToItsSavedPlace() throws {
+    var settings = RoutePreferences()
+    let a = microphone("a"), b = microphone("b"), c = microphone("c")
+    settings.remember([a, b, c])
+    settings.inputOrder = ["a", "b", "c"]
+    settings.setHidden(true, device: try #require(settings.devices([a, b, c], role: .input).first { $0.uid == "b" }))
+
+    let rows = settings.devices([a, b, c], role: .input)
+    let hidden = try #require(rows.first { $0.uid == "b" })
+    let step5 = settings.move(hidden, by: -1, in: rows)
+    #expect(!step5)
+    let step6 = settings.move(hidden, by: 1, in: rows)
+    #expect(!step6)
+    #expect(settings.inputOrder == ["a", "b", "c"])
+
+    settings.setHidden(false, device: hidden)
+    #expect(settings.devices([a, b, c], role: .input).map(\.uid) == ["a", "b", "c"])
+}
+
 @Test func hidingActiveDeviceWithoutRanksSelectsVisiblePhysicalAlternative() {
     let hidden = RouteDevice(id: "old", uid: "old", name: "Old", role: .output, isDisplay: false, isHidden: true, isConnected: true, isVirtual: false)
     let virtual = RouteDevice(id: "app", uid: "app", name: "App", role: .output, isDisplay: false, isHidden: false, isConnected: true, isVirtual: true)

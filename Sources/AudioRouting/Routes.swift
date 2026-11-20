@@ -140,10 +140,15 @@ struct RoutePreferences: Codable, Equatable {
     }
 
     mutating func move(_ device: RouteDevice, by offset: Int, in devices: [RouteDevice]) -> Bool {
-        guard let index = devices.firstIndex(where: { $0.id == device.id }),
-              offset > -devices.count, offset < devices.count, devices.indices.contains(index + offset), offset != 0 else { return false }
+        // Settings lists hidden devices in a group of their own, so a step
+        // counts visible rows only. A hidden device keeps its saved place.
+        let visible = devices.filter { !$0.isHidden }
+        guard offset != 0, let from = visible.firstIndex(where: { $0.id == device.id }),
+              offset > -visible.count, offset < visible.count, visible.indices.contains(from + offset),
+              let index = devices.firstIndex(where: { $0.id == device.id }),
+              let target = devices.firstIndex(where: { $0.id == visible[from + offset].id }) else { return false }
         var reordered = devices
-        reordered.insert(reordered.remove(at: index), at: index + offset)
+        reordered.insert(reordered.remove(at: index), at: target)
         // Preserve historical raw-port ranks adjacent to the current visible
         // row rather than losing an offline device's rank during reordering.
         let existing = order(for: device.role)

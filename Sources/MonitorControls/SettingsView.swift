@@ -293,6 +293,8 @@ private struct DevicePriorities: View {
         let routes = role == .input ? audio.inputs : audio.outputs
         let currentID = role == .input ? audio.input?.id : audio.output?.id
         let names = routeLabels(for: routes)
+        let shown = routes.filter { !$0.isHidden }
+        let hidden = routes.filter(\.isHidden)
 
         VStack(alignment: .leading, spacing: 0) {
             Text("Automatic switching prefers devices higher in this list. Hidden devices are skipped.")
@@ -314,11 +316,27 @@ private struct DevicePriorities: View {
                 }
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, route in
                             DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
-                                      position: index + 1, count: routes.count, active: route.id == currentID)
-                            if index < routes.count - 1 { Divider().accessibilityHidden(true) }
+                                      position: index + 1, count: shown.count, active: route.id == currentID)
+                            if index < shown.count - 1 { Divider().accessibilityHidden(true) }
+                        }
+                        if !hidden.isEmpty {
+                            if !shown.isEmpty { Divider().accessibilityHidden(true) }
+                            Text("Hidden")
+                                .font(DeskType.body.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .accessibilityAddTraits(.isHeader)
+                                .padding(.top, shown.isEmpty ? 0 : 16)
+                                .padding(.bottom, 2)
+                            // Hidden devices take no part in automatic switching,
+                            // so they have no priority number or arrows.
+                            ForEach(Array(hidden.enumerated()), id: \.element.id) { index, route in
+                                DeviceRow(model: model, route: route, name: names[route.id] ?? route.name,
+                                          position: nil, count: 0, active: route.id == currentID)
+                                if index < hidden.count - 1 { Divider().accessibilityHidden(true) }
+                            }
                         }
                     }
                     .padding(.horizontal, 22)
@@ -353,21 +371,25 @@ private struct DeviceRow: View {
     private var audio: AudioController { model.audio }
     let route: RouteDevice
     let name: String
-    let position: Int
+    /// Nil for a hidden device.
+    let position: Int?
     let count: Int
     let active: Bool
 
     var body: some View {
         HStack(spacing: 10) {
-            Text("\(position)")
+            // An empty label keeps the names of both groups in one column.
+            Text(position.map { "\($0)" } ?? "")
                 .font(DeskType.body.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 18, alignment: .trailing)
-                .accessibilityLabel("Priority \(position)")
+                .accessibilityLabel(position.map { "Priority \($0)" } ?? "")
+                .accessibilityHidden(position == nil)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(name)
                     .font(DeskType.device)
+                    .foregroundStyle(position == nil ? .secondary : .primary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .help(name)
@@ -385,10 +407,12 @@ private struct DeviceRow: View {
             Spacer(minLength: 2)
 
             HStack(spacing: 2) {
-                actionButton("Move \(name) up", symbol: "chevron.up") { audio.move(route, by: -1) }
-                    .disabled(position == 1)
-                actionButton("Move \(name) down", symbol: "chevron.down") { audio.move(route, by: 1) }
-                    .disabled(position == count)
+                if let position {
+                    actionButton("Move \(name) up", symbol: "chevron.up") { audio.move(route, by: -1) }
+                        .disabled(position == 1)
+                    actionButton("Move \(name) down", symbol: "chevron.down") { audio.move(route, by: 1) }
+                        .disabled(position == count)
+                }
                 actionButton((route.isHidden ? "Show " : "Hide ") + name, symbol: route.isHidden ? "eye.slash" : "eye") {
                     audio.setHidden(!route.isHidden, for: route)
                 }
@@ -404,8 +428,7 @@ private struct DeviceRow: View {
     }
 
     private var status: String {
-        let connection = active ? "In use" : (route.isConnected ? "Connected" : "Disconnected")
-        return route.isHidden ? connection + " · Hidden" : connection
+        active ? "In use" : (route.isConnected ? "Connected" : "Disconnected")
     }
 
     private func actionButton(_ label: String, symbol: String, action: @escaping () -> Void) -> some View {

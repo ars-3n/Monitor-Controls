@@ -79,7 +79,7 @@ jobs:
             exit 1
           fi
           echo "CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
-      - name: Build universal app
+      - name: Build app
         run: ./scripts/build.sh
       - name: Publish ZIP
         env:
@@ -90,7 +90,7 @@ jobs:
           title="Monitor Controls $version (${REVISION:0:7})"
           notes="$RUNNER_TEMP/release-notes.md"
           git log -1 --format='%s%n' > "$notes"
-          echo 'Download MonitorControls.zip, unzip it, and move Monitor Controls.app to Applications. Requires macOS 14 or later. This build has no Developer ID signature or notarization.' >> "$notes"
+          echo 'Download MonitorControls.zip, unzip it, and move Monitor Controls.app to Applications. Requires a Mac with Apple silicon and macOS 14 or later. This build has no Developer ID signature or notarization.' >> "$notes"
 
           # Keep partially uploaded releases in draft so a rerun can finish them.
           if draft=$(gh release view "$tag" --json isDraft --jq .isDraft); then

@@ -4,7 +4,7 @@ A native macOS menu-bar app for external display brightness, speaker volume, and
 
 ## Use
 
-Download [MonitorControls.zip from the latest release](https://github.com/ars-3n/MacOS-External-Monitor-Controls/releases/latest/download/MonitorControls.zip), unzip it, drag **Monitor Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires macOS 14 or later.
+Download [MonitorControls.zip from the latest release](https://github.com/ars-3n/MacOS-External-Monitor-Controls/releases/latest/download/MonitorControls.zip), unzip it, drag **Monitor Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires a Mac with Apple silicon and macOS 14 or later.
 
 Upgrading from Desk Controls? Quit the old app, move its copy out of Applications, then open **Monitor Controls.app** from Applications. Your device preferences carry over. If you use Open at Login, check its status in **Settings → General** after the move.
 
@@ -27,7 +27,7 @@ swift test
 ./scripts/build.sh
 ```
 
-The build script produces a universal Apple silicon and Intel app in `dist/MonitorControls.zip`. GitHub Actions tests and packages each commit added to `main`, then publishes the ZIP in a release tagged with the app version and commit hash. These builds have no Developer ID signature or notarization.
+The build script produces an Apple silicon app in `dist/MonitorControls.zip`. It does not run on Intel Macs. GitHub Actions tests and packages each commit added to `main`, then publishes the ZIP in a release tagged with the app version and commit hash. These builds have no Developer ID signature or notarization.
 
 The script signs the app ad hoc. macOS ties Accessibility access to the signature, so an ad-hoc build loses that access each time it replaces an older one. Remove Monitor Controls from the Accessibility list and add it again after updating. To keep access across your own builds, set `CODESIGN_IDENTITY` to the name of a signing certificate in your keychain.
 

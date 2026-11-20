@@ -8,25 +8,22 @@ stage="$(mktemp -d "$destination/.bundle-XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 bundle="$stage/Monitor Controls.app/Contents"
 mkdir -p "$bundle/MacOS" "$bundle/Resources/Licenses"
-binaries=()
 minimum_os="$(plutil -extract LSMinimumSystemVersion raw Resources/Info.plist)"
 sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
-for arch in arm64 x86_64; do
-    # The downloadable binary needs no local linker symbols. Debug builds
-    # retain them for development and profiling.
-    # Keep the deployment floor and linked SDK distinct. AppKit uses the
-    # latter to select its appearance on newer systems.
-    args=(--configuration release --arch "$arch" -Xlinker -x
-          -Xlinker -platform_version -Xlinker macos -Xlinker "$minimum_os" -Xlinker "$sdk_version")
-    swift build "${args[@]}" --product MonitorControls
-    binary_dir="$(swift build "${args[@]}" --show-bin-path)"
-    cp "$binary_dir/MonitorControls" "$stage/MonitorControls-$arch"
-    lipo "$stage/MonitorControls-$arch" -verify_arch "$arch"
-    binaries+=("$stage/MonitorControls-$arch")
-done
-lipo -create "${binaries[@]}" -output "$bundle/MacOS/MonitorControls"
-lipo "$bundle/MacOS/MonitorControls" -verify_arch arm64
-lipo "$bundle/MacOS/MonitorControls" -verify_arch x86_64
+# The app is built for Apple silicon only.
+# The downloadable binary needs no local linker symbols. Debug builds
+# retain them for development and profiling.
+# Keep the deployment floor and linked SDK distinct. AppKit uses the
+# latter to select its appearance on newer systems.
+args=(--configuration release --arch arm64 -Xlinker -x
+      -Xlinker -platform_version -Xlinker macos -Xlinker "$minimum_os" -Xlinker "$sdk_version")
+swift build "${args[@]}" --product MonitorControls
+binary_dir="$(swift build "${args[@]}" --show-bin-path)"
+cp "$binary_dir/MonitorControls" "$bundle/MacOS/MonitorControls"
+if [[ "$(lipo -archs "$bundle/MacOS/MonitorControls")" != arm64 ]]; then
+    echo "The binary is not an arm64-only build." >&2
+    exit 1
+fi
 cp Resources/Info.plist "$bundle/Info.plist"
 cp Resources/MonitorControls.icns "$bundle/Resources/MonitorControls.icns"
 cp LICENSE Licenses/* "$bundle/Resources/Licenses/"

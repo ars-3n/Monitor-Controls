@@ -10,7 +10,6 @@ CFDictionaryRef _Nullable MCCopyDisplayInfo(CGDirectDisplayID display) CF_RETURN
 bool MCGetNativeBrightness(CGDirectDisplayID display, float * _Nonnull brightness);
 bool MCSetNativeBrightness(CGDirectDisplayID display, float brightness);
 MCChannel * _Nullable MCOpenARMChannel(io_service_t registryEntry);
-MCChannel * _Nullable MCOpenIntelChannel(CGDirectDisplayID display);
 void MCCloseChannel(MCChannel * _Nonnull channel);
 bool MCReadFeature(MCChannel * _Nonnull channel, uint8_t feature, uint8_t * _Nonnull reply);
 bool MCWriteFeature(MCChannel * _Nonnull channel, uint8_t feature, uint16_t value);

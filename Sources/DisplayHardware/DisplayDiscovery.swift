@@ -159,22 +159,13 @@ enum Discovery {
         var seen: Set<CGDirectDisplayID> = []
         let distinct = connected.filter { seen.insert($0.screenID).inserted }
         guard !distinct.isEmpty else { return [] }
-        #if arch(arm64)
         // CoreDisplay metadata can involve a synchronous IPC. Only NSScreen
         // enumeration runs on the main actor.
         let screens = distinct.map { $0.resolvingLocation() }
         let services = appleSiliconServices()
         let matches = ServiceIdentity.matches(screens: screens, services: services.map(\.identity))
-        #else
-        let screens = distinct
-        #endif
         return screens.enumerated().map { index, screen in
-            #if arch(arm64)
-            let service = matches[index].map { services[$0] }
-            let channel = service?.channel
-            #else
-            let channel = MCOpenIntelChannel(screen.screenID).map(Channel.init)
-            #endif
+            let channel = matches[index].map { services[$0] }?.channel
             let identity = stableID(for: screen, among: screens)
             let display = MonitorDisplay(id: identity.id, screenID: screen.screenID, name: screen.name,
                                          canRememberPairing: identity.persistent, brightness: nil, volume: nil, muted: nil)

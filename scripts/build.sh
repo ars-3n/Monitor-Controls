@@ -9,8 +9,15 @@ trap 'rm -rf "$stage"' EXIT
 bundle="$stage/Desk Controls.app/Contents"
 mkdir -p "$bundle/MacOS" "$bundle/Resources/Licenses"
 binaries=()
+minimum_os="$(plutil -extract LSMinimumSystemVersion raw Resources/Info.plist)"
+sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
 for arch in arm64 x86_64; do
-    args=(--configuration release --arch "$arch")
+    # The downloadable binary needs no local linker symbols. Debug builds
+    # retain them for development and profiling.
+    # Keep the deployment floor and linked SDK distinct. AppKit uses the
+    # latter to select its appearance on newer systems.
+    args=(--configuration release --arch "$arch" -Xlinker -x
+          -Xlinker -platform_version -Xlinker macos -Xlinker "$minimum_os" -Xlinker "$sdk_version")
     swift build "${args[@]}" --product DeskControls
     binary_dir="$(swift build "${args[@]}" --show-bin-path)"
     cp "$binary_dir/DeskControls" "$stage/DeskControls-$arch"

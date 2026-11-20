@@ -32,6 +32,8 @@ struct DisplayWrite: Sendable {
     let fraction: Double
     let routeIsCurrent: (@Sendable () -> Bool)?
 
+    var verifyBrightnessOnly = false
+
     func isCurrent(fence: SessionFence, session: Session) -> Bool {
         guard fence.accepts(session, audio: key.feature.isAudio) else { return false }
         guard let routeIsCurrent else { return true }
@@ -41,6 +43,7 @@ struct DisplayWrite: Sendable {
 }
 
 enum WriteResult: Sendable {
+    case sentBrightness
     case confirmed(Double)
     case unconfirmed(Double?)
     case obsolete
@@ -142,20 +145,24 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             guard allowed() else { return .obsolete }
             // MonitorControl spaces and repeats Set VCP just as it does Get
             // VCP. The LG can acknowledge a lone transfer without applying it.
-            var sent = false
             let native = key.feature == .brightness && endpoint.appleBrightness
-            if native {
-                sent = MCSetNativeBrightness(endpoint.display.screenID, Float(fraction))
-            } else if let channel = endpoint.channel {
-                for _ in 0..<2 {
-                    usleep(10000)
-                    guard allowed() else { return .obsolete }
-                    if channel.write(key.feature, value: target) { sent = true }
+            let verifyingBrightness = key.feature == .brightness && request.verifyBrightnessOnly
+            var sent = verifyingBrightness
+            if !verifyingBrightness {
+                if native {
+                    sent = MCSetNativeBrightness(endpoint.display.screenID, Float(fraction))
+                } else if let channel = endpoint.channel {
+                    for _ in 0..<2 {
+                        usleep(10000)
+                        guard allowed() else { return .obsolete }
+                        if channel.write(key.feature, value: target) { sent = true }
+                    }
                 }
+                // During a drag, leave the bus free for the next position.
+                // The controller verifies the final target after input settles.
+                if sent && key.feature == .brightness { return .sentBrightness }
+                usleep(40000)
             }
-            // A successful bus transfer alone does not prove the monitor
-            // applied the value. Give the panel time to commit, then confirm.
-            usleep(40000)
             var observed = read(key.feature, on: endpoint, allowed: allowed)
             if sent, !DDCValue.confirmed(observed, target: target, feature: key.feature, lg: endpoint.allowsLGQuirk), allowed() {
                 usleep(50000)

@@ -165,7 +165,9 @@ struct RoutePolicy {
                           time: TimeInterval) -> RouteDevice? {
         let live = devices.filter(\.isConnected)
         let present = Set(live.map(\.id))
-        if !initialized, present.isEmpty { return nil }
+        // HAL can publish connected devices before the default at login.
+        // Preserve the saved choice until we can compare it with macOS.
+        if !initialized, current == nil { return nil }
         recentJoins = recentJoins.filter { present.contains($0.key) && time - $0.value < 5 }
         if initialized {
             for id in present.subtracting(connected) { recentJoins[id] = time }
@@ -174,7 +176,7 @@ struct RoutePolicy {
             self.heldID = nil
             // Volatile snapshots may briefly have no default at all. Pin the
             // eventual replacement mic as soon as macOS publishes it.
-            awaitingInputFallback = initialized && (devices.first?.role == .input || devices.isEmpty)
+            awaitingInputFallback = devices.first?.role == .input || devices.isEmpty
         }
         if awaitingInputFallback, let current {
             if current.role == .input, !current.isHidden { heldID = current.id }

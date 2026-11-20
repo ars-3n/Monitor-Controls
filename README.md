@@ -6,10 +6,10 @@ A native macOS menu-bar app for external display brightness, speaker volume, and
 
 Download [DeskControls.zip from the latest release](https://github.com/ars-3n/MacOS-External-Monitor-Controls/releases/latest/download/DeskControls.zip), unzip it, drag **Desk Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires macOS 14 or later.
 
-- **Brightness** adjusts the selected display’s hardware brightness. Apple brightness keys adjust the display beneath the pointer.
+- **Brightness** adjusts the selected display as you drag. Desk Controls checks the final brightness after you pause. Apple brightness keys adjust the display beneath the pointer.
 - **Volume and mute** follow the current system sound output. Compatible monitor speakers use DDC/CI. AirPods and other system-adjustable outputs use macOS audio controls. When headphones disconnect, Desk Controls leaves the monitor at its existing volume.
 - **Microphone** lets you choose the macOS input, adjust gain and toggle mute when supported. An input chosen in another app that changes the system default is remembered until it disconnects or you choose another one.
-- **Settings → Devices** manages device priority and visibility. Existing Audio Priority Bar users can import saved device choices once. The source preferences remain available to the old app.
+- **Settings → Outputs** and **Settings → Microphones** show each device’s priority and visibility. Existing Audio Priority Bar users can import saved device choices once. The source preferences remain available to the old app.
 - **Settings → General** includes Open at Login, keyboard access, and manual monitor speaker pairing when a display output is active. Use manual pairing when displays have the same name or the output and display names differ.
 
 The sliders work without Accessibility access. To use the Apple media keys, grant Desk Controls access in **System Settings → Privacy & Security → Accessibility**. When trying these keys, quit MonitorControl or turn off its Apple key handling so that one app handles each keypress. Right-click the menu-bar icon to quit Desk Controls.

@@ -1,264 +1,414 @@
-import AppKit
 import AudioRouting
 import DisplayHardware
 import SwiftUI
 
-extension Notification.Name {
-    static let showMonitorPairing = Notification.Name("DeskControls.ShowMonitorPairing")
-}
-
 @MainActor
 struct SettingsView: View {
     let model: DeskModel
-    @State private var tab = SettingsTab.general
-    @State private var deviceRole = RouteRole.output
+    let navigation: SettingsNavigation
+
     @State private var confirmImport = false
     @State private var importResult: String?
-    @State private var openPairing = false
-    @FocusState private var pairingFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Settings section", selection: $tab) {
-                ForEach(SettingsTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+        HStack(spacing: 0) {
+            sidebar
+                .zIndex(1)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(sectionTitle)
+                    .font(DeskType.title)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.leading, 22)
+                    .padding(.top, 18)
+                    .padding(.bottom, 4)
+                switch navigation.section {
+                case .general:
+                    GeneralSettings(model: model, navigation: navigation)
+                case .outputs, .microphones:
+                    DevicePriorities(audio: model.audio,
+                                     role: navigation.section == .outputs ? .output : .input,
+                                     importResult: importResult,
+                                     requestImport: { confirmImport = true })
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 220)
-            .padding(.vertical, 12)
-
-            Divider()
-
-            switch tab {
-            case .general: general
-            case .devices: devices
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(minWidth: 475, idealWidth: 500, minHeight: 370, idealHeight: 425)
-        .onReceive(NotificationCenter.default.publisher(for: .showMonitorPairing)) { _ in
-            tab = .general
-            openPairing = true
-        }
-        .alert("Import audio device preferences?", isPresented: $confirmImport) {
-            Button("Cancel", role: .cancel) {}
-            Button("Import") {
-                importResult = model.audio.importLegacyPreferences()
-                    ? "Imported audio device preferences."
-                    : (model.audio.lastError ?? "There were no preferences to import.")
-            }
-        } message: {
-            Text("Use the order and visibility saved in Audio Priority Bar. Any additional devices stay in the list.")
-        }
-    }
-
-    private var general: some View {
-        Form {
-            Section("Startup") {
-                Toggle("Open at login", isOn: Binding(
-                    get: { model.loginEnabled },
-                    set: { model.setLoginEnabled($0) }
-                ))
-                if let message = model.loginMessage {
-                    Text(message)
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if model.loginApprovalPending {
-                    HStack {
-                        Text("Approval is required in Login Items.")
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                        Button("Open Login Items…", action: model.openLoginSettings)
-                    }
-                }
-            }
-            Section {
-                Toggle("Use Apple brightness and volume keys", isOn: Binding(
-                    get: { model.keysEnabled },
-                    set: { model.setKeysEnabled($0) }
-                ))
-                if model.keysEnabled && !model.keysAuthorized {
-                    HStack {
-                        Text("Accessibility access is required for keyboard control.")
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                        Button("Grant Access…", action: model.requestKeyAccess)
-                    }
-                }
-                if let message = model.keyboardMessage {
-                    Text(message)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } header: {
-                Text("Keyboard")
-            } footer: {
-                Text("Brightness adjusts the screen under the pointer. Volume and mute follow the active audio output.")
-            }
-            if let output = model.audio.output, output.isDisplay,
-               model.audio.outputVolume == nil || model.audio.outputMuted == nil {
-                let names = displayLabels(for: model.display.displays)
-                let monitors = model.display.displays.filter { $0.volume != nil || $0.muted != nil }
-                Section {
-                    Picker("Monitor for speakers", selection: Binding(
-                        get: { model.volumeDisplayID },
-                        set: { id in
-                            guard model.audio.output?.uid == output.uid else { return }
-                            if let id {
-                                guard let shown = monitors.first(where: { $0.id == id }),
-                                      model.display.displays.contains(where: {
-                                          $0.id == id && $0.screenID == shown.screenID && ($0.volume != nil || $0.muted != nil)
-                                      }) else { return }
-                            }
-                            model.setVolumeDisplay(id)
-                        }
-                    )) {
-                        Text("Automatic").tag(String?.none)
-                        ForEach(monitors) { display in
-                            Text(names[display.id] ?? display.name).tag(Optional(display.id))
-                        }
-                        if let id = model.volumeDisplayID, !monitors.contains(where: { $0.id == id }) {
-                            Text("Saved monitor (unavailable)").tag(Optional(id)).disabled(true)
-                        }
-                    }
-                    .id(output.uid)
-                    .disabled(monitors.isEmpty && model.volumeDisplayID == nil)
-                    .focused($pairingFocused)
-                } header: {
-                    Text("Monitor speakers")
-                } footer: {
-                    if monitors.isEmpty {
-                        Text(model.display.isRefreshing ? "Looking for monitor speaker controls…" : "No connected monitor reports speaker controls.")
-                    } else if let monitor = monitors.first(where: { $0.id == model.resolvedDisplayID }) {
-                        Text("Speaker controls use \(names[monitor.id] ?? monitor.name).")
-                    } else {
-                        Text("Choose the physical monitor that plays audio from \(output.name).")
-                    }
-                }
-            }
-            if let message = model.statusMessage {
-                Section {
-                    Label(message, systemImage: "exclamationmark.circle")
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .task(id: openPairing) {
-            guard openPairing else { return }
-            pairingFocused = true
-            openPairing = false
-        }
-    }
-
-    private var devices: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Device priority")
-                    .font(.headline)
-                Spacer()
-                Picker("Device type", selection: $deviceRole) {
-                    Text("Outputs").tag(RouteRole.output)
-                    Text("Microphones").tag(RouteRole.input)
-                }
-                .labelsHidden()
-                .fixedSize()
-                .controlSize(.small)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            Text("The highest available device is preferred. Hide a device to skip it.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 20)
-                .padding(.top, 4)
-                .padding(.bottom, 10)
-            let routes = deviceRole == .input ? model.audio.inputs : model.audio.outputs
-            let names = routeLabels(for: routes)
-            if routes.isEmpty {
-                ContentUnavailableView("No saved devices", systemImage: deviceRole == .input ? "mic" : "speaker.wave.2",
-                                       description: Text("Connect a device to add it to this list."))
-                    .frame(maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
-                            if index != 0 { Divider() }
-                            deviceRow(route, name: names[route.id] ?? route.name, index: index, count: routes.count)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
-            }
-            if model.audio.canImportLegacyPreferences || importResult != nil {
-                Divider()
+        .sheet(isPresented: $confirmImport) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Import audio device preferences?")
+                    .font(DeskType.heading)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Use the order and visibility saved in Audio Priority Bar. Any additional devices stay in the list.")
+                    .font(DeskType.body)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    if model.audio.canImportLegacyPreferences {
-                        Button("Import from Audio Priority Bar…") { confirmImport = true }
+                    Spacer()
+                    Button("Cancel", role: .cancel) { confirmImport = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Import") {
+                        importResult = model.audio.importLegacyPreferences()
+                            ? "Imported device order and visibility."
+                            : (model.audio.lastError ?? "There were no preferences to import.")
+                        confirmImport = false
                     }
-                    if let result = importResult {
-                        Text(result)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
+                    .keyboardShortcut(.defaultAction)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+                .font(DeskType.control)
+                .controlSize(.regular)
+                .padding(.top, 4)
             }
+            .padding(24)
+            .frame(width: 420)
         }
     }
 
-    private func deviceRow(_ route: RouteDevice, name: String, index: Int, count: Int) -> some View {
-        HStack(spacing: 8) {
-            Text("\(index + 1)")
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 16, alignment: .trailing)
-                .accessibilityLabel("Priority \(index + 1)")
-            VStack(alignment: .leading, spacing: 1) {
-                Text(name)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(name)
-                if route.isHidden || !route.isConnected {
-                    Text(route.isHidden ? (route.isConnected ? "Hidden" : "Hidden · Disconnected") : "Disconnected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Settings")
+                .font(DeskType.heading)
+                .padding(.leading, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 8)
+            List(selection: Binding<SettingsSection?>(
+                get: { navigation.section },
+                set: { if let section = $0 { navigation.section = section } }
+            )) {
+                Label("General", systemImage: "gearshape")
+                    .font(DeskType.control)
+                    .tag(SettingsSection.general)
+                Section {
+                    Label("Outputs", systemImage: "speaker.wave.2")
+                        .font(DeskType.control)
+                        .tag(SettingsSection.outputs)
+                    Label("Microphones", systemImage: "mic")
+                        .font(DeskType.control)
+                        .tag(SettingsSection.microphones)
+                } header: {
+                    Text("Device priority")
+                        .font(DeskType.body.weight(.medium))
+                        .foregroundStyle(.primary)
                 }
+                .collapsible(false)
             }
-            Spacer(minLength: 4)
-            deviceButton("Move \(name) up", icon: "chevron.up") {
-                model.audio.move(route, by: -1)
-            }
-            .disabled(index == 0)
-            deviceButton("Move \(name) down", icon: "chevron.down") {
-                model.audio.move(route, by: 1)
-            }
-            .disabled(index == count - 1)
-            deviceButton((route.isHidden ? "Show " : "Hide ") + name, icon: route.isHidden ? "eye.slash" : "eye") {
-                model.audio.setHidden(!route.isHidden, for: route)
-            }
+            .environment(\.defaultMinListRowHeight, 30)
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .accessibilityLabel("Settings sections")
         }
-        .padding(.vertical, 7)
-        .frame(minHeight: 39)
+        .frame(width: 162)
+        .modifier(SidebarSurface())
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 8)
     }
 
-    private func deviceButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .frame(width: 20, height: 20)
+    private var sectionTitle: String {
+        switch navigation.section {
+        case .general: "General"
+        case .outputs: "Outputs"
+        case .microphones: "Microphones"
         }
-        .controlSize(.small)
-        .help(title)
-        .accessibilityLabel(title)
     }
 }
 
-private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general = "General"
-    case devices = "Devices"
-    var id: Self { self }
+private struct SidebarSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        if #available(macOS 26, *) {
+            content.glassEffect(.regular, in: shape)
+        } else {
+            content.background(.regularMaterial, in: shape)
+        }
+    }
+}
+
+private struct GeneralSettings: View {
+    let model: DeskModel
+    let navigation: SettingsNavigation
+    @FocusState private var pairingFocused: Bool
+
+    var body: some View {
+        ScrollViewReader { scroll in
+            Form {
+                Section {
+                    Toggle(isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) })) {
+                        Text("Open at login").font(DeskType.body)
+                    }
+                    .controlSize(.regular)
+                    if model.loginApprovalPending {
+                        settingsAction("Allow Desk Controls to open at login in System Settings.",
+                                       button: "Open Login Items…", action: model.openLoginSettings)
+                    }
+                    if let message = model.loginMessage {
+                        feedback(message)
+                    }
+                } header: {
+                    Text("Startup").font(DeskType.device)
+                }
+
+                Section {
+                    Toggle(isOn: Binding(get: { model.keysEnabled }, set: { model.setKeysEnabled($0) })) {
+                        Text("Use brightness and volume keys").font(DeskType.body)
+                    }
+                    .controlSize(.regular)
+                    if model.keysEnabled && !model.keysAuthorized {
+                        settingsAction("Allow keyboard control in Accessibility settings.",
+                                       button: "Grant Access…", action: model.requestKeyAccess)
+                    }
+                    if let message = model.keyboardMessage {
+                        feedback(message)
+                    }
+                } header: {
+                    Text("Keyboard").font(DeskType.device)
+                } footer: {
+                    Text("Brightness keys adjust the display under the pointer. Volume and mute follow the active output.")
+                        .font(DeskType.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let output = model.audio.output, output.isDisplay,
+                   model.audio.outputVolume == nil || model.audio.outputMuted == nil {
+                    MonitorPairing(model: model, output: output, pairingFocused: $pairingFocused)
+                }
+
+                if let message = model.statusMessage {
+                    Section { feedback(message) }
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .task(id: navigation.pairingRequest) {
+                guard navigation.pairingRequest > 0 else { return }
+                scroll.scrollTo("monitor-pairing", anchor: .center)
+                pairingFocused = true
+                navigation.pairingRequest = 0
+            }
+        }
+    }
+
+    private func settingsAction(_ explanation: String, button: String, action: @escaping () -> Void) -> some View {
+        let actionButton = Button(action: action) { Text(button).font(DeskType.control) }
+            .controlSize(.regular)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                Text(explanation).fixedSize()
+                Spacer(minLength: 0)
+                actionButton.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(explanation).fixedSize(horizontal: false, vertical: true)
+                actionButton
+            }
+        }
+        .font(DeskType.body)
+    }
+
+    private func feedback(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.circle")
+            .font(DeskType.body)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+}
+
+private struct MonitorPairing: View {
+    let model: DeskModel
+    let output: RouteDevice
+    @FocusState.Binding var pairingFocused: Bool
+
+    var body: some View {
+        let displays = model.display.displays
+        let names = displayLabels(for: displays)
+        let monitors = displays.filter(canControlSpeakers)
+        let paired = model.volumeDisplayID
+
+        Section {
+            Picker(selection: Binding(
+                get: { model.volumeDisplayID },
+                set: { id in
+                    guard model.audio.output?.uid == output.uid else { return }
+                    if let id {
+                        guard let shown = monitors.first(where: { $0.id == id }),
+                              model.display.displays.contains(where: {
+                                  $0.id == id && $0.screenID == shown.screenID && canControlSpeakers($0)
+                              }) else { return }
+                    }
+                    model.setVolumeDisplay(id)
+                }
+            )) {
+                Text("Automatic").font(DeskType.body).tag(String?.none)
+                ForEach(monitors) { display in
+                    Text(names[display.id] ?? display.name).font(DeskType.body).tag(Optional(display.id))
+                }
+                if let paired, !monitors.contains(where: { $0.id == paired }) {
+                    Text("Saved display (unavailable)").font(DeskType.body).tag(Optional(paired)).disabled(true)
+                }
+            } label: {
+                Text("Control speakers on").font(DeskType.body)
+            }
+            .font(DeskType.body)
+            .controlSize(.regular)
+            .id(output.uid)
+            .disabled(monitors.isEmpty && paired == nil)
+            .focused($pairingFocused)
+            .id("monitor-pairing")
+        } header: {
+            Text("Monitor speakers").font(DeskType.device)
+        } footer: {
+            Group {
+                if monitors.isEmpty {
+                    Text(model.display.isRefreshing ? "Looking for speaker controls…" : "No connected monitor provides the speaker controls this output needs.")
+                } else if let monitor = monitors.first(where: { $0.id == model.resolvedDisplayID }) {
+                    let name = names[monitor.id] ?? monitor.name
+                    if model.audio.outputVolume == nil && monitor.volume != nil {
+                        Text("Volume controls adjust the speakers on \(name).")
+                    } else {
+                        Text("Mute controls the speakers on \(name).")
+                    }
+                } else {
+                    Text("Choose the display that plays audio from \(output.name).")
+                }
+            }
+            .font(DeskType.body)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func canControlSpeakers(_ display: MonitorDisplay) -> Bool {
+        (model.audio.outputVolume == nil && display.volume != nil) ||
+        (model.audio.outputMuted == nil && display.muted != nil)
+    }
+}
+
+private struct DevicePriorities: View {
+    let audio: AudioController
+    let role: RouteRole
+    let importResult: String?
+    let requestImport: () -> Void
+
+    var body: some View {
+        let routes = role == .input ? audio.inputs : audio.outputs
+        let currentID = role == .input ? audio.input?.id : audio.output?.id
+        let names = routeLabels(for: routes)
+
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Automatic switching prefers devices higher in this list. Hidden devices are skipped.")
+                .font(DeskType.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 22)
+                .padding(.top, 4)
+                .padding(.bottom, 16)
+
+            if routes.isEmpty {
+                ContentUnavailableView {
+                    Label(role == .input ? "No saved microphones" : "No saved outputs",
+                          systemImage: role == .input ? "mic" : "speaker.wave.2")
+                        .font(DeskType.heading)
+                } description: {
+                    Text("Connect a device to add it to this list.")
+                        .font(DeskType.body)
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
+                            DeviceRow(audio: audio, route: route, name: names[route.id] ?? route.name,
+                                      position: index + 1, count: routes.count, active: route.id == currentID)
+                            if index < routes.count - 1 { Divider().accessibilityHidden(true) }
+                        }
+                    }
+                    .padding(.horizontal, 22)
+                }
+                .id(role)
+            }
+
+            if audio.canImportLegacyPreferences || importResult != nil {
+                VStack(alignment: .leading, spacing: 5) {
+                    if audio.canImportLegacyPreferences {
+                        Button(action: requestImport) {
+                            Text("Import from Audio Priority Bar…").font(DeskType.control)
+                        }
+                        .controlSize(.regular)
+                    }
+                    if let importResult {
+                        Text(importResult)
+                            .font(DeskType.body)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct DeviceRow: View {
+    let audio: AudioController
+    let route: RouteDevice
+    let name: String
+    let position: Int
+    let count: Int
+    let active: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("\(position)")
+                .font(DeskType.body.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 18, alignment: .trailing)
+                .accessibilityLabel("Priority \(position)")
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name)
+                    .font(DeskType.device)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(name)
+                HStack(spacing: 4) {
+                    if active {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.tint)
+                            .accessibilityHidden(true)
+                    }
+                    Text(status)
+                }
+                .font(DeskType.body)
+                .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 2)
+
+            HStack(spacing: 2) {
+                actionButton("Move \(name) up", symbol: "chevron.up") { audio.move(route, by: -1) }
+                    .disabled(position == 1)
+                actionButton("Move \(name) down", symbol: "chevron.down") { audio.move(route, by: 1) }
+                    .disabled(position == count)
+                actionButton((route.isHidden ? "Show " : "Hide ") + name, symbol: route.isHidden ? "eye.slash" : "eye") {
+                    audio.setHidden(!route.isHidden, for: route)
+                }
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private var status: String {
+        let connection = active ? "In use" : (route.isConnected ? "Connected" : "Disconnected")
+        return route.isHidden ? connection + " · Hidden" : connection
+    }
+
+    private func actionButton(_ label: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(DeskType.control)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(label)
+        .help(label)
+    }
 }

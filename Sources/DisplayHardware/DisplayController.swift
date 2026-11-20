@@ -71,7 +71,7 @@ public final class DisplayController {
     @ObservationIgnored private var recoveryAttempts = 0
     @ObservationIgnored private let recoveryDelays: [Duration]
     @ObservationIgnored private var knownFeatures: [String: Set<Feature>] = [:]
-    @ObservationIgnored private var expectedExternalAfterWake = false
+    @ObservationIgnored private var expectedDisplayCountAfterWake = 0
     @ObservationIgnored private var scanPending = false
     @ObservationIgnored private var readPending = false
     @ObservationIgnored private var confirmed: [String: MonitorDisplay] = [:]
@@ -79,6 +79,7 @@ public final class DisplayController {
     @ObservationIgnored private var writes: [ControlKey: DisplayWrite] = [:]
     @ObservationIgnored private var writeOrder: [ControlKey] = []
     @ObservationIgnored private var pump: Task<Void, Never>?
+    @ObservationIgnored private var brightnessChecks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var settle: Task<Void, Never>?
 
     public init() {
@@ -136,7 +137,7 @@ public final class DisplayController {
         isRunning = false
         systemSleeping = false
         screensSleeping = false
-        expectedExternalAfterWake = false
+        expectedDisplayCountAfterWake = 0
         invalidateTopology()
     }
 
@@ -151,7 +152,7 @@ public final class DisplayController {
         default: return
         }
         if sleeping && !wasSleeping {
-            expectedExternalAfterWake = !displays.isEmpty
+            expectedDisplayCountAfterWake = max(expectedDisplayCountAfterWake, displays.count)
             invalidateTopology()
         } else if !sleeping {
             reconfigure()
@@ -166,6 +167,8 @@ public final class DisplayController {
         recovery?.cancel()
         recovery = nil
         recoveryAttempts = 0
+        for check in brightnessChecks.values { check.cancel() }
+        brightnessChecks.removeAll()
         writes.removeAll()
         writeOrder.removeAll()
         scanPending = false
@@ -187,7 +190,7 @@ public final class DisplayController {
         // One physical connection can emit several reconfiguration callbacks.
         settle = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
-            guard let self else { return }
+            guard !Task.isCancelled, let self else { return }
             self.settle = nil
             self.scanPending = true
             self.schedule()
@@ -236,22 +239,25 @@ public final class DisplayController {
     }
 
     private func didRead(_ result: [MonitorDisplay]) {
-        if !result.isEmpty { expectedExternalAfterWake = false }
+        if result.count >= expectedDisplayCountAfterWake { expectedDisplayCountAfterWake = 0 }
         for display in result {
             let features = Feature.allCases.filter { display.value($0) != nil }
             knownFeatures[display.id, default: []].formUnion(features)
         }
-        guard needsDiscovery else {
+        guard expectedDisplayCountAfterWake > 0 || needsDiscovery else {
             recoveryAttempts = 0
             return
         }
-        guard (expectedExternalAfterWake || !displays.isEmpty),
-              recovery == nil, recoveryAttempts < recoveryDelays.count else { return }
+        guard recoveryAttempts < recoveryDelays.count else {
+            expectedDisplayCountAfterWake = 0
+            return
+        }
+        guard (expectedDisplayCountAfterWake > 0 || !displays.isEmpty), recovery == nil else { return }
         let delay = recoveryDelays[recoveryAttempts]
         recoveryAttempts += 1
         recovery = Task { [weak self] in
             do { try await Task.sleep(for: delay) } catch { return }
-            guard let self else { return }
+            guard !Task.isCancelled, let self else { return }
             self.recovery = nil
             self.readPending = true
             self.schedule()
@@ -279,10 +285,26 @@ public final class DisplayController {
               displays[index].value(feature) != nil else { return }
         let bounded = min(1, max(0, value))
         let key = ControlKey(id: id, feature: feature)
+        if feature == .brightness { brightnessChecks.removeValue(forKey: id)?.cancel() }
         if writes[key] == nil { writeOrder.append(key) }
         writes[key] = DisplayWrite(key: key, fraction: bounded, routeIsCurrent: routeIsCurrent)
         displays[index].apply(bounded, to: feature)
         schedule()
+    }
+
+    private func scheduleBrightnessCheck(_ request: DisplayWrite, session: Session) {
+        let key = request.key
+        brightnessChecks[key.id] = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.brightnessChecks[key.id] = nil
+            guard self.worker.fence.accepts(session) else { return }
+            var check = request
+            check.verifyBrightnessOnly = true
+            self.writes[key] = check
+            self.writeOrder.append(key)
+            self.schedule()
+        }
     }
 
     private func schedule() {
@@ -312,6 +334,8 @@ public final class DisplayController {
                 guard worker.fence.accepts(session, audio: key.feature.isAudio),
                       let index = displays.firstIndex(where: { $0.id == key.id }) else { continue }
                 switch result {
+                case .sentBrightness:
+                    if writes[key] == nil { scheduleBrightnessCheck(request, session: session) }
                 case let .confirmed(value):
                     confirmed[key.id]?.apply(value, to: key.feature)
                     if writes[key] == nil { displays[index].apply(value, to: key.feature) }
@@ -330,15 +354,17 @@ public final class DisplayController {
                     }
                     readPending = true
                 }
-            } else if readPending {
+            } else if readPending && brightnessChecks.isEmpty {
                 readPending = false
                 let result: [MonitorDisplay]
+                let current = screens()
+                if Set(current.map(\.screenID)) != Set(displays.map(\.screenID)) {
+                    // A dock can expose displays in stages after wake without
+                    // delivering a second display reconfiguration callback.
+                    refresh()
+                    continue
+                }
                 if needsDiscovery {
-                    let current = screens()
-                    if Set(current.map(\.screenID)) != Set(displays.map(\.screenID)) {
-                        refresh()
-                        continue
-                    }
                     result = await worker.scan(current, session: session)
                 } else {
                     result = await worker.refresh(ids: displays.map(\.id), session: session)
@@ -362,6 +388,7 @@ public final class DisplayController {
         while true {
             if let settle { await settle.value }
             else if let pump { await pump.value }
+            else if let check = brightnessChecks.values.first { await check.value }
             else if let recovery { await recovery.value }
             else { return }
         }

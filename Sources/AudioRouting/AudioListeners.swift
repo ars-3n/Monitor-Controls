@@ -2,7 +2,7 @@ import AudioToolbox
 import CoreAudio
 import Foundation
 
-enum AudioEvent { case topology, defaults, levels, restart }
+enum AudioEvent { case topology, defaults, levels(RouteRole), restart }
 
 private struct Subscription: Hashable {
     let object: AudioObjectID
@@ -78,9 +78,10 @@ private final class AudioObservation {
         levels = levels.filter { keys.contains($0.key) }
         for key in keys where levels[key] == nil {
             let epoch = generation
+            let role: RouteRole = key.scope == RouteRole.input.scope ? .input : .output
             levels[key] = AudioObservation(key) { [weak self] in
                 guard let self, generation == epoch else { return }
-                receive?(.levels)
+                receive?(.levels(role))
             }
         }
     }

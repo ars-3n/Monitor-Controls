@@ -185,3 +185,25 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(items.count == 1)
     #expect(items.first?.isHidden == true)
 }
+
+@Test func startupWaitsForMacOSToPublishTheCurrentMicrophone() {
+    let usb = audio("usb"), pods = audio("pods")
+    var policy = RoutePolicy(heldID: usb.id)
+    let connected = [usb, pods]
+    _ = policy.desired(current: nil, devices: connected, rankedIDs: [usb.id], time: 0)
+    #expect(policy.desired(current: pods, devices: connected, rankedIDs: [usb.id], time: 1) == pods)
+    #expect(policy.heldID == pods.id)
+}
+
+@Test func restartingAfterHeldMicrophoneDisconnectedKeepsTheMacOSFallback() {
+    let usb = audio("usb"), pods = audio("pods"), builtin = audio("builtin")
+    var input = RoutePolicy(heldID: pods.id)
+    #expect(input.desired(current: builtin, devices: [usb, builtin], rankedIDs: [usb.id], time: 0) == builtin)
+    #expect(input.desired(current: pods, devices: [usb, builtin, pods], rankedIDs: [usb.id], time: 1) == builtin)
+    #expect(input.heldID == builtin.id)
+
+    let display = audio("display", role: .output), speakers = audio("speakers", role: .output)
+    var output = RoutePolicy(heldID: "disconnected-headphones")
+    #expect(output.desired(current: speakers, devices: [display, speakers], rankedIDs: [display.id], time: 0) == display)
+    #expect(output.heldID == nil)
+}

@@ -49,7 +49,7 @@ struct AudioSnapshot: Sendable {
     @ObservationIgnored private var retryListeners: Task<Void, Never>?
     @ObservationIgnored private var retryInventory: Task<Void, Never>?
     @ObservationIgnored private var retriesRemaining = 3
-    @ObservationIgnored private var levelRefreshPending = false
+    @ObservationIgnored private var pendingLevelRoles: Set<RouteRole> = []
     @ObservationIgnored private let activeOutput = OutputIdentity()
     @ObservationIgnored private let gainMute = GainMuteRecovery()
     @ObservationIgnored private var snapshot: AudioSnapshot?
@@ -136,13 +136,15 @@ struct AudioSnapshot: Sendable {
             attachListeners()
             noticeOutputChange()
             refresh()
-        case .levels:
-            guard !levelRefreshPending else { return }
-            levelRefreshPending = true
+        case let .levels(role):
+            // A burst can touch both devices. Schedule one refresh per role.
+            guard pendingLevelRoles.insert(role).inserted, pendingLevelRoles.count == 1 else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                levelRefreshPending = false
-                if running { refreshLevels() }
+                let changed = pendingLevelRoles
+                pendingLevelRoles.removeAll()
+                guard running else { return }
+                for role in changed { refreshLevels(for: role) }
             }
         }
     }
@@ -266,24 +268,32 @@ struct AudioSnapshot: Sendable {
     }
 
     public func refreshLevels() {
-        func levels(_ device: RouteDevice?) -> (Double?, Bool?) {
-            guard let device, let e = endpoint(device), CoreAudioProperties.isCurrent(e) else { return (nil, nil) }
-            let volume = CoreAudioProperties.volume(e)
-            var muted = CoreAudioProperties.mute(e)
+        refreshLevels(for: .input)
+        refreshLevels(for: .output)
+    }
+
+    private func refreshLevels(for role: RouteRole) {
+        let device = role == .input ? input : output
+        var volume: Double?
+        var muted: Bool?
+        if let device, let e = endpoint(device), CoreAudioProperties.isCurrent(e) {
+            volume = CoreAudioProperties.volume(e)
+            muted = CoreAudioProperties.mute(e)
             if let volume, muted == nil || preferences.levelsBeforeMute[device.id] != nil {
                 let scalarMuted = gainMute.isMuted(id: device.id, current: volume, saved: preferences.levelsBeforeMute[device.id]) {
                     storeLevelBeforeMute($0, for: device.id)
                 }
                 muted = (muted == true) || scalarMuted
             }
-            return (volume, muted)
         }
-        let (gain, micMute) = levels(input)
-        let (volume, speakerMute) = levels(output)
-        if inputGain != gain { inputGain = gain }
-        if outputVolume != volume { outputVolume = volume }
-        if inputMuted != micMute { inputMuted = micMute }
-        if outputMuted != speakerMute { outputMuted = speakerMute }
+        switch role {
+        case .input:
+            if inputGain != volume { inputGain = volume }
+            if inputMuted != muted { inputMuted = muted }
+        case .output:
+            if outputVolume != volume { outputVolume = volume }
+            if outputMuted != muted { outputMuted = muted }
+        }
     }
 
     public func setInputGain(_ value: Double) { changeLevel(value, on: input) }
@@ -299,7 +309,7 @@ struct AudioSnapshot: Sendable {
             return
         }
         lastError = nil
-        refreshLevels()
+        refreshLevels(for: device.role)
     }
 
     private func changeMute(_ value: Bool, on device: RouteDevice?) {
@@ -327,7 +337,7 @@ struct AudioSnapshot: Sendable {
             }
         }
         lastError = nil
-        refreshLevels()
+        refreshLevels(for: device.role)
     }
 
     public func move(_ device: RouteDevice, by offset: Int) {

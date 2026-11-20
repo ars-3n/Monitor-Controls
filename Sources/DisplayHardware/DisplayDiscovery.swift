@@ -187,9 +187,12 @@ enum Discovery {
     static func stableID(for screen: ScreenDescription, among screens: [ScreenDescription]) -> (id: String, persistent: Bool) {
         let model = "\(screen.vendor)-\(screen.product)"
         let same = screens.filter { $0.vendor == screen.vendor && $0.product == screen.product && $0.serial == screen.serial }
-        if same.count == 1 {
-            if screen.serial != 0 { return ("\(model)-s\(screen.serial)", true) }
-            if let uuid = screen.uuid { return ("\(model)-u\(uuid)", true) }
+        if screen.serial != 0 && same.count == 1 { return ("\(model)-s\(screen.serial)", true) }
+        // Two serial-less monitors can still have distinct Core Graphics UUIDs.
+        // Keep their identity stable when either monitor connects or disconnects.
+        if screen.serial == 0, let uuid = screen.uuid, !uuid.isEmpty,
+           same.filter({ $0.uuid == uuid }).count == 1 {
+            return ("\(model)-u\(uuid)", true)
         }
         // Same-model panels can report identical serials and display UUIDs.
         // A live CG identifier distinguishes them only until reconfiguration.

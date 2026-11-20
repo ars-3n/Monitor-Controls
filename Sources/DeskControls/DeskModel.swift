@@ -45,7 +45,7 @@ final class DeskModel {
         media.adjust = { [weak self] in self?.adjust($0, id: $1, fine: $2) }
         display.start()
         audio.start()
-        refreshServices()
+        refreshKeyboardService()
     }
 
     func stop() {
@@ -69,7 +69,7 @@ final class DeskModel {
     func openedPanel() {
         audio.refreshLevels()
         display.refreshValues()
-        refreshServices()
+        refreshKeyboardService()
     }
 
     var statusMessage: String? {
@@ -87,10 +87,11 @@ final class DeskModel {
         let candidates = display.displays.map { DisplayCandidate(id: $0.id, name: $0.name) }
         let resolved = OutputPairing.resolve(outputName: output.name, connectedDisplayOutputNames: names,
                                              monitors: candidates, preferredID: volumeDisplayID)
-        return display.displays.first { $0.id == resolved }
+        // Match against every connected screen so duplicate names stay ambiguous.
+        // A screen that only supports brightness cannot be a speaker-control target.
+        return display.displays.first { $0.id == resolved && ($0.volume != nil || $0.muted != nil) }
     }
 
-    var resolvedDisplayName: String? { resolvedDisplay?.name }
     var resolvedDisplayID: String? { resolvedDisplay?.id }
     var volume: Double? { audio.outputVolume ?? resolvedDisplay?.volume }
     var outputMuted: Bool? { audio.outputMuted ?? resolvedDisplay?.muted }
@@ -150,11 +151,15 @@ final class DeskModel {
             guard let id = DisplayPlacement.atPointer(NSEvent.mouseLocation, screens: placements ?? []) else { return .system }
             let monitor = display.displays.first { $0.screenID == id && $0.brightness != nil }
             return .brightness(external: CGDisplayIsBuiltin(id) == 0, controllableID: monitor?.id)
-        case .mute:
-            guard audio.outputMuted == nil, let screen = resolvedDisplay, screen.muted != nil else { return .system }
-            return .monitor(screen.id)
-        case .volumeUp, .volumeDown:
-            guard audio.outputVolume == nil, let screen = resolvedDisplay, screen.volume != nil else { return .system }
+        case .mute, .volumeUp, .volumeDown:
+            let isMute = key == .mute
+            guard (isMute ? audio.outputMuted == nil : audio.outputVolume == nil),
+                  let output = audio.output, output.isDisplay,
+                  // HAL can announce the new output before its inventory has refreshed.
+                  // Let macOS handle the key once it has retired the cached monitor route.
+                  audio.outputGuard(for: output) != nil,
+                  let screen = resolvedDisplay,
+                  (isMute ? screen.muted != nil : screen.volume != nil) else { return .system }
             return .monitor(screen.id)
         }
     }
@@ -198,8 +203,9 @@ final class DeskModel {
         }
     }
 
-    func refreshServices() {
+    func refreshServices(checkLogin: Bool = true) {
         refreshKeyboardService()
+        guard checkLogin else { return }
         let status = SMAppService.mainApp.status
         loginEnabled = status == .enabled || status == .requiresApproval
         loginApprovalPending = status == .requiresApproval

@@ -44,6 +44,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem?
     private lazy var contextMenu = makeAppMenu()
     private var settingsWindow: NSWindow?
+    private let settingsNavigation = SettingsNavigation()
     private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -59,13 +60,14 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
         }
         popover.behavior = .transient
         popover.animates = false
-        popover.contentViewController = NSHostingController(rootView: PanelView(model: model) { [weak self] in
-            self?.showSettings()
-        })
         let menu = NSMenu()
         let root = NSMenuItem()
         root.submenu = makeAppMenu()
         menu.addItem(root)
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let fileItem = menu.addItem(withTitle: "File", action: nil, keyEquivalent: "")
+        fileItem.submenu = fileMenu
         NSApp.mainMenu = menu
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main
@@ -75,7 +77,9 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
         model.start()
     }
 
-    func applicationDidBecomeActive(_ notification: Notification) { model.refreshServices() }
+    func applicationDidBecomeActive(_ notification: Notification) {
+        model.refreshServices(checkLogin: settingsWindow?.isVisible == true)
+    }
     func applicationDidChangeScreenParameters(_ notification: Notification) { model.screenParametersChanged() }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
@@ -115,20 +119,50 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
     private func showPanel() {
         guard let button = item?.button else { return }
         model.openedPanel()
+        if popover.contentViewController == nil {
+            popover.contentViewController = NSHostingController(rootView: PanelView(model: model) { [weak self] destination in
+                self?.openSettings(destination)
+            })
+        }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        guard let panel = popover.contentViewController?.view.window else { return }
+        if let screen = panel.screen, let barWindow = button.window {
+            // The system popover can point into the icon itself. Keep the tip
+            // below the visible menu bar, including when the bar auto-hides.
+            let buttonFrame = barWindow.convertToScreen(button.convert(button.bounds, to: nil))
+            let barBottom = screen == barWindow.screen
+                ? min(screen.visibleFrame.maxY, buttonFrame.minY) : screen.visibleFrame.maxY
+            let top = barBottom - 2
+            if panel.frame.maxY > top {
+                panel.setFrameTopLeftPoint(NSPoint(x: panel.frame.minX, y: top))
+            }
+        }
+        panel.makeKey()
     }
 
     @objc private func showSettings() {
+        openSettings(.settings)
+    }
+
+    private func openSettings(_ destination: SettingsDestination) {
         popover.performClose(nil)
+        settingsNavigation.open(destination)
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 465),
-                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            let initialSize = NSSize(width: 730, height: 510)
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: initialSize),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
             window.title = "Desk Controls Settings"
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
-            window.contentMinSize = NSSize(width: 475, height: 390)
-            window.contentViewController = NSHostingController(rootView: SettingsView(model: model))
+            let host = NSHostingController(rootView: SettingsView(model: model, navigation: settingsNavigation))
+            // Let the window own its dimensions. Switching to a long device list
+            // should scroll its content without resizing the user's window.
+            host.sizingOptions = []
+            window.contentViewController = host
+            window.contentMinSize = NSSize(width: 625, height: 420)
+            window.setContentSize(initialSize)
             window.setFrameAutosaveName("DeskControlsSettings")
             if !window.setFrameUsingName("DeskControlsSettings") ||
                 !NSScreen.screens.contains(where: { $0.visibleFrame.contains(CGPoint(x: window.frame.midX, y: window.frame.maxY - 12)) }) {

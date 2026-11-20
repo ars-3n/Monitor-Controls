@@ -75,6 +75,18 @@ private extension DDCValue {
         #expect(Discovery.stableID(for: before, among: [before]).id == Discovery.stableID(for: after, among: [after]).id)
     }
 
+    @Test func sameModelWithoutSerialKeepsUniqueUUIDPairingsWhenADisplayDisconnects() {
+        let left = screen(1)
+        let right = ScreenDescription(screenID: 2, name: left.name, vendor: left.vendor, product: left.product,
+                                      serial: 0, uuid: "second CG UUID", location: nil)
+        for display in [left, right] {
+            let together = Discovery.stableID(for: display, among: [left, right])
+            let alone = Discovery.stableID(for: display, among: [display])
+            #expect(together.persistent)
+            #expect(together.id == alone.id)
+        }
+    }
+
     @Test func outputChangesCancelSpeakerWritesAndTopologyCancelsAllWrites() {
         let fence = SessionFence()
         let first = fence.snapshot()
@@ -105,6 +117,7 @@ private actor TestDisplayIO: DisplayIO {
     var sent: [ControlKey] = []
     var display = MonitorDisplay(id: "lg", screenID: 42, name: "LG", brightness: 0.25, volume: 0.18, muted: false)
 
+    var additionalDisplays: [MonitorDisplay] = []
     var scanCount = 0
     var scansWithoutControls = 0
     func makeUnavailable(for scans: Int) { scansWithoutControls = scans }
@@ -117,9 +130,13 @@ private actor TestDisplayIO: DisplayIO {
             for feature in Feature.allCases { unready.apply(nil, to: feature) }
             return [unready]
         }
-        return [display]
+        additionalDisplays = screens.dropFirst().map { screen in
+            MonitorDisplay(id: String(screen.screenID), screenID: screen.screenID, name: screen.name,
+                           brightness: 0.5, volume: nil, muted: nil)
+        }
+        return [display] + additionalDisplays
     }
-    func refresh(ids: [String], session: Session) -> [MonitorDisplay] { [display] }
+    func refresh(ids: [String], session: Session) -> [MonitorDisplay] { [display] + additionalDisplays }
     func write(_ request: DisplayWrite, session: Session) -> WriteResult {
         guard request.isCurrent(fence: fence, session: session) else { return .obsolete }
         sent.append(request.key)
@@ -177,6 +194,39 @@ private let deskScreen = ScreenDescription(screenID: 42, name: "LG", vendor: 1, 
     #expect(await worker.scanCount == 4)
 }
 
+@MainActor @Test func wakeRecoversSecondDisplayAndPanelRefreshDetectsMissedDisconnect() async {
+    let worker = TestDisplayIO()
+    let second = ScreenDescription(screenID: 43, name: "Other monitor", vendor: 1, product: 234,
+                                   serial: 789, uuid: nil, location: nil)
+    @MainActor final class Inventory {
+        var connected: [ScreenDescription] = []
+        var firstScanAfterWake = false
+    }
+    let inventory = Inventory()
+    inventory.connected = [deskScreen, second]
+    let controller = DisplayController(worker: worker, recoveryDelays: [.milliseconds(1)]) {
+        if inventory.firstScanAfterWake {
+            inventory.firstScanAfterWake = false
+            return [deskScreen]
+        }
+        return inventory.connected
+    }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    #expect(controller.displays.map(\.screenID) == [42, 43])
+    controller.powerChanged(NSWorkspace.screensDidSleepNotification)
+    inventory.firstScanAfterWake = true
+    controller.powerChanged(NSWorkspace.screensDidWakeNotification)
+    await controller.waitUntilIdle()
+    #expect(controller.displays.map(\.screenID) == [42, 43])
+
+    inventory.connected = [deskScreen]
+    controller.refreshValues()
+    await controller.waitUntilIdle()
+    #expect(controller.displays.map(\.screenID) == [42])
+}
+
 @Test func routeProbeCannotRevalidateAnExpiredTopology() {
     let fence = SessionFence()
     let request = DisplayWrite(key: ControlKey(id: "lg", feature: .volume), fraction: 0.3) {
@@ -202,6 +252,9 @@ private final class SimulatedChannel: DDCChannel, Sendable {
         var writes: [Feature] = []
         var routeCurrent = true
         var brightnessReads = 0
+        var brightness: UInt8 = 25
+        var brightnessTargets: [UInt16] = []
+        var ignoresBrightness = false
     }
     let state = OSAllocatedUnfairLock(initialState: State())
 
@@ -214,7 +267,7 @@ private final class SimulatedChannel: DDCChannel, Sendable {
             // Looks like "unsupported" until its invalid checksum is examined.
             return [0x6e, 0x88, 2, 1, feature.rawValue, 0, 0, 100, 0, 0, 0]
         }
-        let current: UInt8 = feature == .mute ? 2 : 25
+        let current: UInt8 = feature == .brightness ? state.withLock { $0.brightness } : (feature == .mute ? 2 : 25)
         let bytes: [UInt8] = [0x6e, 0x88, 2, 0, feature.rawValue, 0, 0, 100, 0, current]
         return bytes + [bytes.reduce(UInt8(0x50), ^)]
     }
@@ -222,10 +275,49 @@ private final class SimulatedChannel: DDCChannel, Sendable {
     func write(_ feature: Feature, value: UInt16) -> Bool {
         state.withLock {
             $0.writes.append(feature)
+            if feature == .brightness {
+                $0.brightnessTargets.append(value)
+                if !$0.ignoresBrightness { $0.brightness = UInt8(value) }
+            }
             $0.routeCurrent = false // e.g. AirPods connected between the two bus transfers
         }
         return true
     }
+}
+
+@MainActor @Test func brightnessDragSendsLatestPositionAndChecksOnlyTheFinalValue() async {
+    let channel = SimulatedChannel()
+    let worker = DisplayWorker(discover: { _ in
+        let display = MonitorDisplay(id: "lg", screenID: 42, name: "LG", brightness: nil, volume: nil, muted: nil)
+        return [Endpoint(display: display, channel: channel, allowsLGQuirk: false, appleBrightness: false)]
+    }, isOnline: { _ in true })
+    let controller = DisplayController(worker: worker) { [deskScreen] }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    let initialReads = channel.state.withLock { $0.brightnessReads }
+
+    controller.setBrightness(0.3, for: "lg")
+    // Wait for the first real write so this exercises a drag across multiple
+    // turns of the controller's pump, not just coalescing in a single turn.
+    let deadline = ContinuousClock.now + .seconds(2)
+    while channel.state.withLock({ $0.brightnessTargets.isEmpty }) && ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    controller.setBrightness(0.4, for: "lg")
+    controller.setBrightness(0.6, for: "lg")
+    await controller.waitUntilIdle()
+    #expect(channel.state.withLock { $0.brightnessTargets } == [30, 30, 60, 60])
+    #expect(channel.state.withLock { $0.brightnessReads - initialReads } == 1)
+    #expect(controller.displays.first?.brightness == 0.6)
+    #expect(controller.lastError == nil)
+
+    // A successful transfer may still be ignored by the monitor.
+    channel.state.withLock { $0.ignoresBrightness = true }
+    controller.setBrightness(0.8, for: "lg")
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.brightness == 0.6)
+    #expect(controller.lastError != nil)
 }
 
 @Test func outputChangeStopsTheSecondHardwareTransfer() async {

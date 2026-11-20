@@ -31,6 +31,8 @@ public enum OutputPairing {
 
 public enum DeskKey: Int, Hashable, Sendable {
     case volumeUp = 0, volumeDown = 1, brightnessUp = 2, brightnessDown = 3, mute = 7
+
+    fileprivate var isBrightness: Bool { self == .brightnessUp || self == .brightnessDown }
 }
 
 /// NSScreen frames and NSEvent.mouseLocation use the same global coordinate space.
@@ -79,12 +81,21 @@ public struct PressTracker {
     public init() {}
     public mutating func reset() { held.removeAll() }
 
+    public mutating func cancelAdjustments(audioOnly: Bool = false) {
+        // Keep consuming these presses until key-up, even if the original
+        // route returns while the key is still held.
+        for key in Array(held.keys) where !audioOnly || !key.isBrightness {
+            held[key] = .unavailable
+        }
+    }
+
     public mutating func disposition(for press: MediaPress, target: KeyTarget) -> KeyDisposition {
         if !press.isDown {
             return held.removeValue(forKey: press.key) == nil ? .passThrough : .consume
         }
         if press.isRepeat {
             guard let original = held[press.key] else { return .passThrough }
+            if original != target { held[press.key] = .unavailable }
             if original == target, case let .monitor(id) = original, press.key != .mute { return .adjust(id) }
             return .consume
         }

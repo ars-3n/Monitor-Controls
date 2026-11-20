@@ -2,10 +2,25 @@ import CoreAudio
 import Foundation
 import Observation
 
-private struct AudioSnapshot: Sendable {
+struct AudioSnapshot: Sendable {
     let endpoints: [Endpoint]
     let inputID: AudioObjectID?
     let outputID: AudioObjectID?
+
+    init?(endpoints: [Endpoint], inputID: AudioObjectID?, outputID: AudioObjectID?) {
+        // HAL publishes topology and default changes independently. A default
+        // pointing outside this enumeration means it is not a coherent snapshot.
+        for (id, role) in [(inputID, RouteRole.input), (outputID, .output)] {
+            if let id, !endpoints.contains(where: { $0.objectID == id && $0.role == role }) { return nil }
+        }
+        self.endpoints = endpoints
+        self.inputID = inputID
+        self.outputID = outputID
+    }
+
+    var defaultsAreCurrent: Bool {
+        CoreAudioProperties.defaultDevice(.input) == inputID && CoreAudioProperties.defaultDevice(.output) == outputID
+    }
 
     static func read() -> Self? {
         guard let endpoints = CoreAudioProperties.inventory() else { return nil }
@@ -35,7 +50,8 @@ private struct AudioSnapshot: Sendable {
     @ObservationIgnored private var retryInventory: Task<Void, Never>?
     @ObservationIgnored private var retriesRemaining = 3
     @ObservationIgnored private var levelRefreshPending = false
-    @ObservationIgnored private var lastOutputUID: String?
+    @ObservationIgnored private let activeOutput = OutputIdentity()
+    @ObservationIgnored private let gainMute = GainMuteRecovery()
     @ObservationIgnored private var snapshot: AudioSnapshot?
     @ObservationIgnored private var preferences: RoutePreferences
     @ObservationIgnored private let defaults: UserDefaults
@@ -63,12 +79,15 @@ private struct AudioSnapshot: Sendable {
     public func start() {
         guard !running else { return }
         running = true
+        policies[.input] = RoutePolicy(heldID: preferences.inputHold)
+        policies[.output] = RoutePolicy(heldID: preferences.outputHold)
         listeners.receive = { [weak self] event in self?.handle(event) }
         attachListeners()
         refresh()
     }
 
     public func stop() {
+        guard running else { return }
         running = false
         generation &+= 1
         retryInventory?.cancel()
@@ -77,6 +96,8 @@ private struct AudioSnapshot: Sendable {
         retryListeners = nil
         listeners.stop()
         listeners.receive = nil
+        activeOutput.invalidate()
+        onOutputChanged?()
     }
 
     private func attachListeners() {
@@ -107,6 +128,10 @@ private struct AudioSnapshot: Sendable {
             noticeOutputChange()
             refresh()
         case .restart:
+            // Core Audio can recycle both the object ID and UID when it
+            // restarts. Invalidate old display commands even in that case.
+            activeOutput.invalidate()
+            onOutputChanged?()
             listeners.stop()
             attachListeners()
             noticeOutputChange()
@@ -123,11 +148,9 @@ private struct AudioSnapshot: Sendable {
     }
 
     private func noticeOutputChange() {
-        let uid = CoreAudioProperties.defaultDevice(.output).flatMap(CoreAudioProperties.deviceUID)
-        if lastOutputUID != uid {
-            lastOutputUID = uid
-            onOutputChanged?()
-        }
+        let id = CoreAudioProperties.defaultDevice(.output)
+        let uid = id.flatMap(CoreAudioProperties.deviceUID)
+        if activeOutput.update(objectID: id, uid: uid) { onOutputChanged?() }
     }
 
     public func refresh() {
@@ -168,6 +191,11 @@ private struct AudioSnapshot: Sendable {
     }
 
     private func apply(_ update: AudioSnapshot) {
+        guard running else { return }
+        guard update.defaultsAreCurrent else {
+            requestInventory()
+            return
+        }
         let before = preferences
         snapshot = update
         preferences.remember(update.endpoints)
@@ -200,7 +228,7 @@ private struct AudioSnapshot: Sendable {
                                                                         time: ProcessInfo.processInfo.systemUptime)
             if let desired, desired.id != current?.id, let current, let old = endpoint(current), CoreAudioProperties.isCurrent(old),
                changeDefault(desired) {
-                policies[role]?.didSelect(desired, manually: false)
+                policies[role]?.didSelect(desired, manually: false, replacing: current)
             }
         }
         persistIfChanged(since: before)
@@ -210,15 +238,15 @@ private struct AudioSnapshot: Sendable {
         snapshot?.endpoints.first { $0.uid == device.uid && $0.role == device.role }
     }
 
-    /// Validate slider/key actions against the system default while an
-    /// inventory notification is still in flight.
-    public func isCurrentOutput(_ device: RouteDevice) -> Bool {
-        guard device.role == .output, device.isConnected, let e = endpoint(device) else { return false }
-        return CoreAudioProperties.isCurrent(e)
+    /// Creating the guard only examines our snapshot. Invoke it on the
+    /// hardware worker immediately before issuing a monitor speaker command.
+    public func outputGuard(for device: RouteDevice) -> (@Sendable () -> Bool)? {
+        guard running, output == device, device.role == .output, let e = endpoint(device) else { return nil }
+        return activeOutput.guardFor(e) { CoreAudioProperties.isCurrent(e) }
     }
 
     private func changeDefault(_ device: RouteDevice) -> Bool {
-        guard let e = endpoint(device), device.isConnected, CoreAudioProperties.deviceUID(e.objectID) == e.uid,
+        guard running, let e = endpoint(device), device.isConnected, CoreAudioProperties.deviceUID(e.objectID) == e.uid,
               CoreAudioProperties.setDefault(e.objectID, role: e.role) else { return false }
         if e.role == .output { noticeOutputChange() }
         return true
@@ -231,7 +259,7 @@ private struct AudioSnapshot: Sendable {
             return
         }
         let before = preferences
-        policies[device.role, default: RoutePolicy()].didSelect(device, manually: true)
+        policies[device.role, default: RoutePolicy()].didSelect(device, manually: true, replacing: device.role == .input ? input : output)
         lastError = nil
         persistIfChanged(since: before)
         refresh()
@@ -242,9 +270,11 @@ private struct AudioSnapshot: Sendable {
             guard let device, let e = endpoint(device), CoreAudioProperties.isCurrent(e) else { return (nil, nil) }
             let volume = CoreAudioProperties.volume(e)
             var muted = CoreAudioProperties.mute(e)
-            if muted == nil, let volume {
-                if volume > 0, preferences.levelsBeforeMute.removeValue(forKey: device.id) != nil { save() }
-                muted = preferences.levelsBeforeMute[device.id] != nil && volume == 0
+            if let volume, muted == nil || preferences.levelsBeforeMute[device.id] != nil {
+                let scalarMuted = gainMute.isMuted(id: device.id, current: volume, saved: preferences.levelsBeforeMute[device.id]) {
+                    storeLevelBeforeMute($0, for: device.id)
+                }
+                muted = (muted == true) || scalarMuted
             }
             return (volume, muted)
         }
@@ -262,6 +292,7 @@ private struct AudioSnapshot: Sendable {
     public func setOutputMuted(_ value: Bool) { changeMute(value, on: output) }
 
     private func changeLevel(_ value: Double, on device: RouteDevice?) {
+        guard running else { return }
         guard let device, let e = endpoint(device), CoreAudioProperties.setVolume(value, for: e) else {
             lastError = "The audio device could not change its level."
             refresh()
@@ -272,34 +303,28 @@ private struct AudioSnapshot: Sendable {
     }
 
     private func changeMute(_ value: Bool, on device: RouteDevice?) {
-        guard let device, let e = endpoint(device), CoreAudioProperties.isCurrent(e) else { return }
-        if CoreAudioProperties.mute(e) != nil {
+        guard running, let device, let e = endpoint(device), CoreAudioProperties.isCurrent(e) else { return }
+        let native = CoreAudioProperties.mute(e)
+        let saved = preferences.levelsBeforeMute[device.id]
+        if let native, native != value {
             guard CoreAudioProperties.setMute(value, for: e) else {
                 lastError = "The audio device could not change its mute setting."
                 return
             }
-        } else if let current = CoreAudioProperties.volume(e) {
-            let saved = preferences.levelsBeforeMute[device.id]
-            if value, saved == nil {
-                preferences.levelsBeforeMute[device.id] = current
-                save()
-                if !CoreAudioProperties.setVolume(0, for: e) {
-                    preferences.levelsBeforeMute.removeValue(forKey: device.id)
-                    save()
-                    lastError = "The audio device could not mute."
-                    return
-                }
-            } else if !value, let saved {
-                guard current > 0 || CoreAudioProperties.setVolume(saved, for: e) else {
-                    lastError = "The audio device could not restore its level."
-                    return
-                }
-                preferences.levelsBeforeMute.removeValue(forKey: device.id)
-                save()
+        }
+        // A driver may gain a native mute after a service restart. Unmute
+        // must still restore a previously zeroed software gain.
+        if native == nil || (!value && saved != nil) {
+            guard let current = CoreAudioProperties.volume(e) else {
+                lastError = "This device does not expose a writable gain control."
+                return
             }
-        } else {
-            lastError = "This device does not expose a mute control."
-            return
+            guard gainMute.set(value, id: device.id, current: current, saved: saved,
+                               save: { storeLevelBeforeMute($0, for: device.id) },
+                               write: { CoreAudioProperties.setVolume($0, for: e) }) else {
+                lastError = value ? "The audio device could not mute." : "The audio device could not restore its level."
+                return
+            }
         }
         lastError = nil
         refreshLevels()
@@ -332,6 +357,12 @@ private struct AudioSnapshot: Sendable {
         save()
         if let snapshot { apply(snapshot) }
         return true
+    }
+
+    private func storeLevelBeforeMute(_ level: Double?, for id: String) {
+        guard preferences.levelsBeforeMute[id] != level else { return }
+        preferences.levelsBeforeMute[id] = level
+        save()
     }
 
     private func persistIfChanged(since previous: RoutePreferences) {

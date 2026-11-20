@@ -18,12 +18,17 @@ struct ScreenDescription: Sendable {
             guard let screenID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value,
                   CGDisplayIsBuiltin(screenID) == 0 else { return nil }
             let uuid = CGDisplayCreateUUIDFromDisplayID(screenID)?.takeRetainedValue()
-            let info = MCCopyDisplayInfo(screenID) as NSDictionary?
             return Self(screenID: screenID, name: screen.localizedName, vendor: CGDisplayVendorNumber(screenID),
                         product: CGDisplayModelNumber(screenID), serial: CGDisplaySerialNumber(screenID),
                         uuid: uuid.map { CFUUIDCreateString(nil, $0) as String },
-                        location: info?[kIODisplayLocationKey] as? String)
+                        location: nil)
         }
+    }
+
+    func resolvingLocation() -> Self {
+        let info = MCCopyDisplayInfo(screenID) as NSDictionary?
+        return Self(screenID: screenID, name: name, vendor: vendor, product: product, serial: serial,
+                    uuid: uuid, location: info?[kIODisplayLocationKey] as? String)
     }
 }
 
@@ -34,21 +39,27 @@ struct ServiceIdentity {
 
     // Name-only matching requires uniqueness in both directions.
     func score(for screen: ScreenDescription) -> Int {
+        // A dock may reuse its framebuffer path before the old DDC proxy
+        // disappears. A contradictory physical serial rules that proxy out.
+        if serial != 0 && screen.serial != 0 && serial != screen.serial { return 0 }
         if let location = screen.location, !location.isEmpty {
             if location == framebufferPath { return 3 }
             if location.hasPrefix("IOService:") && framebufferPath.hasPrefix("IOService:") { return 0 }
         }
         guard productName.caseInsensitiveCompare(screen.name) == .orderedSame else { return 0 }
-        if serial != 0 && screen.serial != 0 { return serial == screen.serial ? 2 : 0 }
+        if serial != 0 && screen.serial != 0 { return 2 }
         return 1
     }
 
     static func matches(screens: [ScreenDescription], services: [ServiceIdentity]) -> [Int: Int] {
+        let scores = screens.map { screen in services.map { $0.score(for: screen) } }
+        let bestForScreen = scores.map { $0.max() ?? 0 }
+        let bestForService = services.indices.map { index in scores.map { $0[index] }.max() ?? 0 }
         var matches: [Int: Int] = [:]
         var consumed: Set<Int> = []
         for rank in stride(from: 3, through: 1, by: -1) {
-            let candidates = screens.indices.filter { matches[$0] == nil }.map { i in
-                (i, services.indices.filter { !consumed.contains($0) && services[$0].score(for: screens[i]) == rank })
+            let candidates = screens.indices.filter { matches[$0] == nil && bestForScreen[$0] == rank }.map { i in
+                (i, services.indices.filter { !consumed.contains($0) && scores[i][$0] == rank && bestForService[$0] == rank })
             }
             for (screen, options) in candidates where options.count == 1 {
                 let service = options[0]
@@ -81,9 +92,23 @@ private func forEachService(_ name: String, visit: (io_service_t) -> Void) {
     }
 }
 
-final class Channel {
+protocol DDCChannel: AnyObject {
+    func read(_ feature: Feature) -> [UInt8]?
+    func write(_ feature: Feature, value: UInt16) -> Bool
+}
+
+final class Channel: DDCChannel {
     let handle: OpaquePointer
     init(_ handle: OpaquePointer) { self.handle = handle }
+    func read(_ feature: Feature) -> [UInt8]? {
+        var reply = [UInt8](repeating: 0, count: 11)
+        return MCReadFeature(handle, feature.rawValue, &reply) ? reply : nil
+    }
+
+    func write(_ feature: Feature, value: UInt16) -> Bool {
+        MCWriteFeature(handle, feature.rawValue, value)
+    }
+
     deinit { MCCloseChannel(handle) }
 }
 
@@ -123,17 +148,25 @@ private func appleSiliconServices() -> [Service] {
 
 struct Endpoint {
     let display: MonitorDisplay
-    let channel: Channel?
+    let channel: (any DDCChannel)?
     let allowsLGQuirk: Bool
     let appleBrightness: Bool
     var readings: [Feature: DDCValue] = [:]
 }
 
 enum Discovery {
-    static func endpoints(_ screens: [ScreenDescription]) -> [Endpoint] {
+    static func endpoints(_ connected: [ScreenDescription]) -> [Endpoint] {
+        var seen: Set<CGDirectDisplayID> = []
+        let distinct = connected.filter { seen.insert($0.screenID).inserted }
+        guard !distinct.isEmpty else { return [] }
         #if arch(arm64)
+        // CoreDisplay metadata can involve a synchronous IPC. Only NSScreen
+        // enumeration runs on the main actor.
+        let screens = distinct.map { $0.resolvingLocation() }
         let services = appleSiliconServices()
         let matches = ServiceIdentity.matches(screens: screens, services: services.map(\.identity))
+        #else
+        let screens = distinct
         #endif
         return screens.enumerated().map { index, screen in
             #if arch(arm64)

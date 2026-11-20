@@ -14,6 +14,8 @@ struct SettingsView: View {
     @State private var deviceRole = RouteRole.output
     @State private var confirmImport = false
     @State private var importResult: String?
+    @State private var openPairing = false
+    @FocusState private var pairingFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +37,10 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 475, idealWidth: 500, minHeight: 370, idealHeight: 425)
-        .onReceive(NotificationCenter.default.publisher(for: .showMonitorPairing)) { _ in tab = .general }
+        .onReceive(NotificationCenter.default.publisher(for: .showMonitorPairing)) { _ in
+            tab = .general
+            openPairing = true
+        }
         .alert("Import audio device preferences?", isPresented: $confirmImport) {
             Button("Cancel", role: .cancel) {}
             Button("Import") {
@@ -52,6 +57,19 @@ struct SettingsView: View {
         Form {
             Section("Startup") {
                 Toggle("Open at login", isOn: Binding(get: { model.loginEnabled }, set: model.setLoginEnabled))
+                if let message = model.loginMessage {
+                    Text(message)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if model.loginApprovalPending {
+                    HStack {
+                        Text("Approval is required in Login Items.")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Open Login Items…", action: model.openLoginSettings)
+                    }
+                }
             }
             Section {
                 Toggle("Use Apple brightness and volume keys", isOn: Binding(get: { model.keysEnabled }, set: model.setKeysEnabled))
@@ -73,27 +91,42 @@ struct SettingsView: View {
             } footer: {
                 Text("Brightness adjusts the screen under the pointer. Volume and mute follow the active audio output.")
             }
-            if let output = model.audio.output, output.isDisplay {
+            if let output = model.audio.output, output.isDisplay,
+               model.audio.outputVolume == nil || model.audio.outputMuted == nil {
                 let names = displayLabels(for: model.display.displays)
+                let monitors = model.display.displays.filter { $0.volume != nil || $0.muted != nil }
                 Section {
-                    Picker("Monitor for speaker volume", selection: Binding(
+                    Picker("Monitor for speakers", selection: Binding(
                         get: { model.volumeDisplayID },
-                        set: model.setVolumeDisplay
+                        set: { id in
+                            guard model.audio.output?.uid == output.uid else { return }
+                            if let id {
+                                guard let shown = monitors.first(where: { $0.id == id }),
+                                      model.display.displays.contains(where: {
+                                          $0.id == id && $0.screenID == shown.screenID && ($0.volume != nil || $0.muted != nil)
+                                      }) else { return }
+                            }
+                            model.setVolumeDisplay(id)
+                        }
                     )) {
                         Text("Automatic").tag(String?.none)
-                        ForEach(model.display.displays.filter { $0.volume != nil || $0.muted != nil }) { display in
+                        ForEach(monitors) { display in
                             Text(names[display.id] ?? display.name).tag(Optional(display.id))
                         }
-                        if let id = model.volumeDisplayID,
-                           !model.display.displays.contains(where: { $0.id == id && ($0.volume != nil || $0.muted != nil) }) {
-                            Text("Saved monitor (unavailable)").tag(Optional(id))
+                        if let id = model.volumeDisplayID, !monitors.contains(where: { $0.id == id }) {
+                            Text("Saved monitor (unavailable)").tag(Optional(id)).disabled(true)
                         }
                     }
+                    .id(output.uid)
+                    .disabled(monitors.isEmpty && model.volumeDisplayID == nil)
+                    .focused($pairingFocused)
                 } header: {
                     Text("Monitor speakers")
                 } footer: {
-                    if let monitor = model.resolvedDisplayName {
-                        Text("Speaker volume is controlled on \(monitor).")
+                    if monitors.isEmpty {
+                        Text(model.display.isRefreshing ? "Looking for monitor speaker controls…" : "No connected monitor reports speaker controls.")
+                    } else if let monitor = monitors.first(where: { $0.id == model.resolvedDisplayID }) {
+                        Text("Speaker controls use \(names[monitor.id] ?? monitor.name).")
                     } else {
                         Text("Choose the physical monitor that plays audio from \(output.name).")
                     }
@@ -108,6 +141,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .task(id: openPairing) {
+            guard openPairing else { return }
+            pairingFocused = true
+            openPairing = false
+        }
     }
 
     private var devices: some View {

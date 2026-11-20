@@ -132,11 +132,15 @@ enum CoreAudioProperties {
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr else { return nil }
         guard size > 0 else { return [] }
-        var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &ids) == noErr else {
-            return nil
+        let stride = UInt32(MemoryLayout<AudioObjectID>.stride)
+        let capacity = size
+        guard capacity.isMultiple(of: stride) else { return nil }
+        var ids = [AudioObjectID](repeating: 0, count: Int(capacity / stride))
+        let status = ids.withUnsafeMutableBufferPointer { buffer in
+            AudioObjectGetPropertyData(id, &address, 0, nil, &size, buffer.baseAddress!)
         }
-        return Array(ids.prefix(Int(size) / MemoryLayout<AudioObjectID>.size))
+        guard status == noErr, size <= capacity, size.isMultiple(of: stride) else { return nil }
+        return Array(ids.prefix(Int(size / stride)))
     }
 
     /// The registry can lag behind the audio driver. An absent descriptor
@@ -176,26 +180,7 @@ enum CoreAudioProperties {
         _ id: AudioObjectID,
         scope: AudioObjectPropertyScope
     ) -> [AudioObjectID] {
-        var address = property(
-            kAudioDevicePropertyStreams,
-            scope: scope
-        )
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(
-            id, &address, 0, nil, &size
-        ) == noErr, size > 0 else {
-            return []
-        }
-        var streams = [AudioObjectID](
-            repeating: 0,
-            count: Int(size) / MemoryLayout<AudioObjectID>.size
-        )
-        guard AudioObjectGetPropertyData(
-            id, &address, 0, nil, &size, &streams
-        ) == noErr else {
-            return []
-        }
-        return streams
+        objectIDs(id, selector: kAudioDevicePropertyStreams, scope: scope) ?? []
     }
 
     private static func stringProperty(

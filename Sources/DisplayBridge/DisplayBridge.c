@@ -49,7 +49,7 @@ bool MCGetNativeBrightness(CGDirectDisplayID display, float *brightness) {
 
 bool MCSetNativeBrightness(CGDirectDisplayID display, float brightness) {
     loadAPI();
-    return api.setBrightness && api.setBrightness(display, brightness) == 0;
+    return brightness >= 0.f && brightness <= 1.f && api.setBrightness && api.setBrightness(display, brightness) == 0;
 }
 
 struct MCChannel {
@@ -74,18 +74,23 @@ MCChannel *MCOpenIntelChannel(CGDirectDisplayID display) {
     io_service_t framebuffer = CGDisplayIOServicePort(display);
 #pragma clang diagnostic pop
     IOItemCount count = 0;
-    if (!framebuffer || IOFBGetI2CInterfaceCount(framebuffer, &count) != KERN_SUCCESS || !count) {
+    if (framebuffer && IOFBGetI2CInterfaceCount(framebuffer, &count) == KERN_SUCCESS && count) {
+        if (IOObjectRetain(framebuffer) != KERN_SUCCESS) return NULL; // CG returns a borrowed port.
+    } else {
         // Some Intel systems only expose the per-display framebuffer via CGS.
         typedef void (*ServiceForDisplay)(CGDirectDisplayID, io_service_t *);
         ServiceForDisplay find = (ServiceForDisplay)dlsym(RTLD_DEFAULT, "CGSServiceForDisplayNumber");
         if (!find) return NULL;
         framebuffer = IO_OBJECT_NULL;
         find(display, &framebuffer);
-        if (!framebuffer || IOFBGetI2CInterfaceCount(framebuffer, &count) != KERN_SUCCESS || !count) return NULL;
+        if (!framebuffer) return NULL;
+        if (IOFBGetI2CInterfaceCount(framebuffer, &count) != KERN_SUCCESS || !count) {
+            IOObjectRelease(framebuffer);
+            return NULL;
+        }
     }
     MCChannel *channel = calloc(1, sizeof(*channel));
-    if (!channel) return NULL;
-    IOObjectRetain(framebuffer);
+    if (!channel) { IOObjectRelease(framebuffer); return NULL; }
     channel->framebuffer = framebuffer;
     return channel;
 #else

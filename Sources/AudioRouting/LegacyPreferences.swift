@@ -9,6 +9,11 @@ private struct LegacyDevice: Decodable {
     let previousUIDs: [String]?
 }
 
+private struct LegacyRow: Decodable {
+    let device: LegacyDevice?
+    init(from decoder: Decoder) throws { device = try? LegacyDevice(from: decoder) }
+}
+
 extension RoutePreferences {
     static func containsLegacyChoices(_ domain: [String: Any]) -> Bool {
         ["inputPriorities", "speakerPriorities", "headphonePriorities", "hiddenMics", "hiddenSpeakers", "hiddenHeadphones"].contains {
@@ -34,7 +39,7 @@ extension RoutePreferences {
         let microphones = Set(strings("hiddenMics"))
         let speakers = Set(strings("hiddenSpeakers"))
         let headphones = Set(strings("hiddenHeadphones"))
-        let known = (domain["knownDevices"] as? Data).flatMap { try? JSONDecoder().decode([LegacyDevice].self, from: $0) } ?? []
+        let known = (domain["knownDevices"] as? Data).flatMap { try? JSONDecoder().decode([LegacyRow].self, from: $0) }?.compactMap(\.device) ?? []
         ambiguousFamilies.formUnion(strings("ambiguousPortFamilies"))
         var legacyNames: [RouteRole: [String: LegacyDevice]] = [:]
         for record in known {

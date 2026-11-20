@@ -10,10 +10,16 @@ final class MediaKeys {
     private var port: CFMachPort?
     private var source: CFRunLoopSource?
 
-    var active: Bool { port != nil }
+    isolated deinit { stop() }
 
     func start() -> Bool {
-        if active { return true }
+        if let port, CFMachPortIsValid(port), let source, CFRunLoopSourceIsValid(source) {
+            if CGEvent.tapIsEnabled(tap: port) { return true }
+            tracker.cancelAdjustments()
+            CGEvent.tapEnable(tap: port, enable: true)
+            if CGEvent.tapIsEnabled(tap: port) { return true }
+        }
+        stop()
         let systemDefined = UInt32(NSEvent.EventType.systemDefined.rawValue)
         let callback: CGEventTapCallBack = { _, type, event, context in
             guard let context else { return Unmanaged.passUnretained(event) }
@@ -35,7 +41,9 @@ final class MediaKeys {
         self.source = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: port, enable: true)
-        return true
+        if CGEvent.tapIsEnabled(tap: port) { return true }
+        stop()
+        return false
     }
 
     func stop() {
@@ -46,9 +54,13 @@ final class MediaKeys {
         tracker.reset()
     }
 
+    func cancelAdjustments(audioOnly: Bool = false) {
+        tracker.cancelAdjustments(audioOnly: audioOnly)
+    }
+
     private func handle(_ type: CGEventType, event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            tracker.reset()
+            tracker.cancelAdjustments()
             if let port { CGEvent.tapEnable(tap: port, enable: true) }
             return false
         }

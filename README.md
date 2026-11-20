@@ -4,7 +4,7 @@ A native macOS menu-bar app for external display brightness, speaker volume, and
 
 ## Use
 
-Unzip `DeskControls.zip`, drag **Desk Controls.app** into Applications, and open it. Click the sliders icon in the menu bar. The app requires macOS 14 or later.
+Unzip `DeskControls.zip`, drag **Desk Controls.app** into Applications, and open it. Click the monitor with three sound-level bars in the menu bar. The app requires macOS 14 or later.
 
 - **Brightness** adjusts the selected display’s hardware brightness. Apple brightness keys adjust the display beneath the pointer.
 - **Volume and mute** follow the current system sound output. Compatible monitor speakers use DDC/CI. AirPods and other system-adjustable outputs use macOS audio controls. When headphones disconnect, Desk Controls leaves the monitor at its existing volume.
@@ -18,7 +18,7 @@ Hardware controls depend on the monitor and connection. A dock that does not car
 
 ## Build and test
 
-Use Xcode with Swift 6. Open `Package.swift` in Xcode, or run these commands from the repository root.
+Use Xcode with Swift 6.2 or later. Open `Package.swift` in Xcode, or run these commands from the repository root.
 
 ```sh
 swift test

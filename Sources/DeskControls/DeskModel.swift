@@ -19,8 +19,8 @@ final class DeskModel {
     private(set) var keysAuthorized = false
     private(set) var keyboardMessage: String?
     private(set) var loginEnabled = false
-    private var serviceMessage: String?
-    private var loginApprovalPending = false
+    private(set) var loginMessage: String?
+    private(set) var loginApprovalPending = false
     private var running = false
 
     init(audio: AudioController = AudioController(), display: DisplayController = DisplayController(),
@@ -35,10 +35,11 @@ final class DeskModel {
     func start() {
         guard !running else { return }
         running = true
-        audio.onOutputChanged = { [weak self] in self?.display.cancelPendingAudioWrites() }
+        audio.onOutputChanged = { [weak self] in self?.invalidateSpeakerControls() }
         display.onTopologyChanged = { [weak self] in
             self?.sessionPairs.removeAll()
-            self?.placements = nil
+            self?.screenParametersChanged()
+            self?.media.cancelAdjustments()
         }
         media.target = { [weak self] in self?.target(for: $0) ?? .system }
         media.adjust = { [weak self] in self?.adjust($0, id: $1, fine: $2) }
@@ -50,8 +51,19 @@ final class DeskModel {
     func stop() {
         running = false
         media.stop()
+        audio.onOutputChanged = nil
+        display.onTopologyChanged = nil
         audio.stop()
         display.stop()
+    }
+
+    func screenParametersChanged() { placements = nil }
+
+    func screenDidWake() {
+        guard running else { return }
+        screenParametersChanged()
+        audio.refresh()
+        refreshKeyboardService()
     }
 
     func openedPanel() {
@@ -61,8 +73,7 @@ final class DeskModel {
     }
 
     var statusMessage: String? {
-        audio.lastError ?? display.lastError ?? serviceMessage ?? (loginApprovalPending
-            ? "Allow Desk Controls in System Settings → General → Login Items." : nil)
+        audio.lastError ?? display.lastError
     }
 
     var volumeDisplayID: String? {
@@ -80,20 +91,19 @@ final class DeskModel {
     }
 
     var resolvedDisplayName: String? { resolvedDisplay?.name }
+    var resolvedDisplayID: String? { resolvedDisplay?.id }
     var volume: Double? { audio.outputVolume ?? resolvedDisplay?.volume }
     var outputMuted: Bool? { audio.outputMuted ?? resolvedDisplay?.muted }
 
-    /// Routing notifications can arrive before the asynchronous device inventory.
-    /// Recheck the live system output before accepting a monitor speaker command.
-    private var currentSpeakerDisplay: MonitorDisplay? {
-        guard let output = audio.output, output.isDisplay, audio.isCurrentOutput(output) else { return nil }
-        return resolvedDisplay
+    private func invalidateSpeakerControls() {
+        media.cancelAdjustments(audioOnly: true)
+        display.cancelPendingAudioWrites()
     }
 
     func setVolumeDisplay(_ id: String?) {
         guard let output = audio.output, output.isDisplay else { return }
         if let id, !display.displays.contains(where: { $0.id == id }) { return }
-        display.cancelPendingAudioWrites()
+        invalidateSpeakerControls()
         savedPairs[output.id] = nil
         sessionPairs[output.id] = nil
         if let id, let screen = display.displays.first(where: { $0.id == id }) {
@@ -108,12 +118,24 @@ final class DeskModel {
 
     func setVolume(_ value: Double) {
         if audio.outputVolume != nil { audio.setOutputVolume(value) }
-        else if let screen = currentSpeakerDisplay, screen.volume != nil { display.setVolume(value, for: screen.id) }
+        else if let screen = resolvedDisplay { setSpeakerVolume(value, on: screen) }
     }
 
     func setOutputMuted(_ muted: Bool) {
         if audio.outputMuted != nil { audio.setOutputMuted(muted) }
-        else if let screen = currentSpeakerDisplay, screen.muted != nil { display.setMuted(muted, for: screen.id) }
+        else if let screen = resolvedDisplay { setSpeakerMuted(muted, on: screen) }
+    }
+
+    // The guard checks for changes that arrive before the HAL listener or
+    // between the two transfers in a DDC write.
+    private func setSpeakerVolume(_ value: Double, on screen: MonitorDisplay) {
+        guard screen.volume != nil, let output = audio.output, let routeIsCurrent = audio.outputGuard(for: output) else { return }
+        display.setVolume(value, for: screen.id, while: routeIsCurrent)
+    }
+
+    private func setSpeakerMuted(_ muted: Bool, on screen: MonitorDisplay) {
+        guard screen.muted != nil, let output = audio.output, let routeIsCurrent = audio.outputGuard(for: output) else { return }
+        display.setMuted(muted, for: screen.id, while: routeIsCurrent)
     }
 
     private func target(for key: DeskKey) -> KeyTarget {
@@ -129,10 +151,10 @@ final class DeskModel {
             let monitor = display.displays.first { $0.screenID == id && $0.brightness != nil }
             return .brightness(external: CGDisplayIsBuiltin(id) == 0, controllableID: monitor?.id)
         case .mute:
-            guard audio.outputMuted == nil, let screen = currentSpeakerDisplay, screen.muted != nil else { return .system }
+            guard audio.outputMuted == nil, let screen = resolvedDisplay, screen.muted != nil else { return .system }
             return .monitor(screen.id)
         case .volumeUp, .volumeDown:
-            guard audio.outputVolume == nil, let screen = currentSpeakerDisplay, screen.volume != nil else { return .system }
+            guard audio.outputVolume == nil, let screen = resolvedDisplay, screen.volume != nil else { return .system }
             return .monitor(screen.id)
         }
     }
@@ -146,9 +168,9 @@ final class DeskModel {
             display.setBrightness(min(1, max(0, current + (key == .brightnessUp ? step : -step))), for: id)
         case .volumeUp, .volumeDown:
             guard let current = screen.volume else { return }
-            display.setVolume(min(1, max(0, current + (key == .volumeUp ? step : -step))), for: id)
+            setSpeakerVolume(min(1, max(0, current + (key == .volumeUp ? step : -step))), on: screen)
         case .mute:
-            if let muted = screen.muted { display.setMuted(!muted, for: id) }
+            if let muted = screen.muted { setSpeakerMuted(!muted, on: screen) }
         }
     }
 
@@ -166,7 +188,7 @@ final class DeskModel {
         refreshServices()
     }
 
-    func refreshServices() {
+    private func refreshKeyboardService() {
         keysAuthorized = AXIsProcessTrusted()
         if running && keysEnabled && keysAuthorized {
             keyboardMessage = media.start() ? nil : "Keyboard access could not start. Reopen Desk Controls after granting Accessibility access."
@@ -174,18 +196,28 @@ final class DeskModel {
             media.stop()
             keyboardMessage = nil
         }
+    }
+
+    func refreshServices() {
+        refreshKeyboardService()
         let status = SMAppService.mainApp.status
         loginEnabled = status == .enabled || status == .requiresApproval
         loginApprovalPending = status == .requiresApproval
     }
 
     func setLoginEnabled(_ enabled: Bool) {
-        serviceMessage = nil
+        loginMessage = nil
         do {
-            if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            let service = SMAppService.mainApp
+            let status = service.status
+            let registered = status == .enabled || status == .requiresApproval
+            if enabled && !registered { try service.register() }
+            if !enabled && registered { try service.unregister() }
         } catch {
-            serviceMessage = "Open at Login: " + error.localizedDescription
+            loginMessage = error.localizedDescription
         }
         refreshServices()
     }
+
+    func openLoginSettings() { SMAppService.openSystemSettingsLoginItems() }
 }

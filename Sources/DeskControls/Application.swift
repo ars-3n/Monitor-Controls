@@ -18,13 +18,20 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
     private let model = DeskModel()
     private let popover = NSPopover()
     private var item: NSStatusItem?
+    private lazy var contextMenu = makeAppMenu()
     private var settingsWindow: NSWindow?
+    private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Opening the bundle again should reveal the existing instance.
+        // Concurrent launches must agree on which instance owns the hardware.
         if let id = Bundle.main.bundleIdentifier,
            let other = NSRunningApplication.runningApplications(withBundleIdentifier: id)
-            .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && !$0.isTerminated }) {
+            .filter({ !$0.isTerminated })
+            .min(by: { lhs, rhs in
+                let left = lhs.launchDate ?? .distantPast
+                let right = rhs.launchDate ?? .distantPast
+                return left == right ? lhs.processIdentifier < rhs.processIdentifier : left < right
+            }), other.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             other.activate()
             NSApp.terminate(nil)
             return
@@ -32,9 +39,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
         let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item = status
         if let button = status.button {
-            let image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Desk Controls")
-            image?.isTemplate = true
-            button.image = image
+            button.image = soundLevelsIcon()
             button.toolTip = "Desk Controls"
             button.setAccessibilityLabel("Desk Controls")
             button.action = #selector(togglePanel)
@@ -47,32 +52,50 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
             self?.showSettings()
         })
         let menu = NSMenu()
-        let appMenu = NSMenu()
         let root = NSMenuItem()
-        root.submenu = appMenu
+        root.submenu = makeAppMenu()
         menu.addItem(root)
-        let settings = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
-        settings.target = self
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Desk Controls", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         NSApp.mainMenu = menu
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.screenDidWake() }
+        }
         model.start()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) { model.refreshServices() }
+    func applicationDidChangeScreenParameters(_ notification: Notification) { model.screenParametersChanged() }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { showPanel() }
+        if let window = settingsWindow, window.isVisible || window.isMiniaturized {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        } else if !popover.isShown {
+            showPanel()
+        }
         return true
     }
 
-    func applicationWillTerminate(_ notification: Notification) { model.stop() }
+    func applicationWillTerminate(_ notification: Notification) {
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        model.stop()
+    }
+
+    private func makeAppMenu() -> NSMenu {
+        let menu = NSMenu()
+        let settings = menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(.separator())
+        let quit = menu.addItem(withTitle: "Quit Desk Controls", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.target = NSApp
+        return menu
+    }
 
     @objc private func togglePanel() {
-        if NSApp.currentEvent?.type == .rightMouseUp, let status = item, let menu = NSApp.mainMenu?.items.first?.submenu {
-            status.menu = menu
-            status.button?.performClick(nil)
-            status.menu = nil
+        if let event = NSApp.currentEvent, event.type == .rightMouseUp, let button = item?.button {
+            popover.performClose(nil)
+            NSMenu.popUpContextMenu(contextMenu, with: event, for: button)
             return
         }
         if popover.isShown { popover.performClose(nil) } else { showPanel() }
@@ -96,11 +119,15 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate {
             window.contentMinSize = NSSize(width: 475, height: 390)
             window.contentViewController = NSHostingController(rootView: SettingsView(model: model))
             window.setFrameAutosaveName("DeskControlsSettings")
-            if !window.setFrameUsingName("DeskControlsSettings") { window.center() }
+            if !window.setFrameUsingName("DeskControlsSettings") ||
+                !NSScreen.screens.contains(where: { $0.visibleFrame.contains(CGPoint(x: window.frame.midX, y: window.frame.maxY - 12)) }) {
+                window.center()
+            }
             settingsWindow = window
         }
         model.refreshServices()
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
+        if settingsWindow?.isMiniaturized == true { settingsWindow?.deminiaturize(nil) }
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 }

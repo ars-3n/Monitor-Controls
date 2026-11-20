@@ -27,9 +27,23 @@ struct ControlKey: Hashable, Sendable {
     let feature: Feature
 }
 
-struct WriteResult: Sendable {
-    let value: Double?
-    let success: Bool
+struct DisplayWrite: Sendable {
+    let key: ControlKey
+    let fraction: Double
+    let routeIsCurrent: (@Sendable () -> Bool)?
+
+    func isCurrent(fence: SessionFence, session: Session) -> Bool {
+        guard fence.accepts(session, audio: key.feature.isAudio) else { return false }
+        guard let routeIsCurrent else { return true }
+        // Core Audio may block in the route query while a dock disconnects.
+        return routeIsCurrent() && fence.accepts(session, audio: key.feature.isAudio)
+    }
+}
+
+enum WriteResult: Sendable {
+    case confirmed(Double)
+    case unconfirmed(Double?)
+    case obsolete
 }
 
 // All handles and register ranges are confined to this serial queue. Each
@@ -40,13 +54,21 @@ protocol DisplayIO: Sendable {
     func releaseConnections()
     func scan(_ screens: [ScreenDescription], session: Session) async -> [MonitorDisplay]
     func refresh(ids: [String], session: Session) async -> [MonitorDisplay]
-    func write(_ key: ControlKey, fraction: Double, session: Session) async -> WriteResult
+    func write(_ request: DisplayWrite, session: Session) async -> WriteResult
 }
 
 final class DisplayWorker: DisplayIO, @unchecked Sendable {
     private let queue = DispatchQueue(label: "DisplayHardware.DDC", qos: .userInitiated)
     private var endpoints: [String: Endpoint] = [:]
     let fence = SessionFence()
+    private let discover: @Sendable ([ScreenDescription]) -> [Endpoint]
+    private let isOnline: @Sendable (CGDirectDisplayID) -> Bool
+
+    init(discover: @escaping @Sendable ([ScreenDescription]) -> [Endpoint] = Discovery.endpoints,
+         isOnline: @escaping @Sendable (CGDirectDisplayID) -> Bool = { CGDisplayIsOnline($0) != 0 }) {
+        self.discover = discover
+        self.isOnline = isOnline
+    }
 
     func releaseConnections() {
         queue.async { [self] in endpoints.removeAll() }
@@ -61,7 +83,7 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
     func scan(_ screens: [ScreenDescription], session: Session) async -> [MonitorDisplay] {
         await perform { [self] in
             guard fence.accepts(session) else { return [] }
-            let ordered = Discovery.endpoints(screens)
+            let ordered = discover(screens)
             endpoints = Dictionary(uniqueKeysWithValues: ordered.map { ($0.display.id, $0) })
             return readValues(ids: ordered.map(\.display.id), session: session)
         }
@@ -72,20 +94,21 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
     }
 
     private func read(_ feature: Feature, on endpoint: Endpoint, allowed: () -> Bool) -> DDCValue? {
-        guard allowed(), CGDisplayIsOnline(endpoint.display.screenID) != 0 else { return nil }
+        guard allowed(), isOnline(endpoint.display.screenID) else { return nil }
         if feature == .brightness && endpoint.appleBrightness {
             var value: Float = 0
             guard MCGetNativeBrightness(endpoint.display.screenID, &value) else { return nil }
             return DDCValue(current: UInt16((value * 10000).rounded()), maximum: 10000)
         }
         guard let channel = endpoint.channel else { return nil }
-        var bytes = [UInt8](repeating: 0, count: 11)
         for _ in 0..<2 {
-            guard allowed(), CGDisplayIsOnline(endpoint.display.screenID) != 0 else { return nil }
-            if MCReadFeature(channel.handle, feature.rawValue, &bytes),
-               let value = DDCValue.decode(bytes, for: feature, allowsLGQuirk: endpoint.allowsLGQuirk) { return value }
-            // Unsupported responses are stable until the next refresh.
-            if bytes[2] == 2 && bytes[3] == 1 && bytes[4] == feature.rawValue { break }
+            guard allowed(), isOnline(endpoint.display.screenID) else { return nil }
+            guard let bytes = channel.read(feature) else { continue }
+            switch DDCValue.parse(bytes, for: feature, allowsLGQuirk: endpoint.allowsLGQuirk) {
+            case let .value(value): return value
+            case .unsupported: return nil
+            case .invalid: continue
+            }
         }
         return nil
     }
@@ -104,16 +127,19 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
         }
     }
 
-    func write(_ key: ControlKey, fraction: Double, session: Session) async -> WriteResult {
+    func write(_ request: DisplayWrite, session: Session) async -> WriteResult {
         await perform { [self] in
-            let allowed = { [self] in fence.accepts(session, audio: key.feature.isAudio) }
-            guard allowed(), var endpoint = endpoints[key.id],
+            let key = request.key
+            let fraction = request.fraction
+            let allowed = { [self] in request.isCurrent(fence: fence, session: session) }
+            guard allowed() else { return .obsolete }
+            guard fraction.isFinite, (0...1).contains(fraction), var endpoint = endpoints[key.id],
                   let previous = endpoint.readings[key.feature],
-                  CGDisplayIsOnline(endpoint.display.screenID) != 0 else {
-                return WriteResult(value: nil, success: false)
+                  isOnline(endpoint.display.screenID) else {
+                return .unconfirmed(nil)
             }
             let target = key.feature == .mute ? UInt16(fraction == 0 ? 2 : 1) : UInt16((fraction * Double(previous.maximum)).rounded())
-            guard allowed() else { return WriteResult(value: nil, success: false) }
+            guard allowed() else { return .obsolete }
             // MonitorControl spaces and repeats Set VCP just as it does Get
             // VCP. The LG can acknowledge a lone transfer without applying it.
             var sent = false
@@ -123,8 +149,8 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             } else if let channel = endpoint.channel {
                 for _ in 0..<2 {
                     usleep(10000)
-                    guard allowed() else { return WriteResult(value: nil, success: false) }
-                    if MCWriteFeature(channel.handle, key.feature.rawValue, target) { sent = true }
+                    guard allowed() else { return .obsolete }
+                    if channel.write(key.feature, value: target) { sent = true }
                 }
             }
             // A successful bus transfer alone does not prove the monitor
@@ -135,13 +161,14 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
                 usleep(50000)
                 observed = read(key.feature, on: endpoint, allowed: allowed)
             }
-            guard allowed() else { return WriteResult(value: nil, success: false) }
+            guard allowed() else { return .obsolete }
             if let observed { endpoint.readings[key.feature] = observed }
             endpoints[key.id] = endpoint
             let value = observed.map { key.feature == .mute ? ($0.current == 1 ? 1.0 : 0.0) : $0.fraction }
             let confirmed = native ? value.map { abs($0 - fraction) <= 0.01 } == true :
                 DDCValue.confirmed(observed, target: target, feature: key.feature, lg: endpoint.allowsLGQuirk)
-            return WriteResult(value: value, success: sent && confirmed)
+            if sent, confirmed, let value { return .confirmed(value) }
+            return .unconfirmed(value)
         }
     }
 }

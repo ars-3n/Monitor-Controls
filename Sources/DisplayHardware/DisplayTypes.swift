@@ -33,22 +33,26 @@ struct DDCValue: Equatable, Sendable {
     let current: UInt16
     let maximum: UInt16
 
-    static func decode(_ bytes: [UInt8], for feature: Feature, allowsLGQuirk: Bool) -> Self? {
-        guard bytes.count == 11, bytes[0] == 0x6e, bytes[2] == 2, bytes[3] == 0,
+    enum Reply { case value(DDCValue), unsupported, invalid }
+
+    static func parse(_ bytes: [UInt8], for feature: Feature, allowsLGQuirk: Bool) -> Reply {
+        guard bytes.count == 11, bytes[0] == 0x6e, bytes[2] == 2,
               bytes[4] == feature.rawValue,
-              bytes[1] == 0x88 || (allowsLGQuirk && bytes[1] == 0) else { return nil }
+              bytes[1] == 0x88 || (allowsLGQuirk && bytes[1] == 0) else { return .invalid }
         // Some LG ULTRAWIDE replies contain a zero length byte, yet retain the
         // checksum for 0x88. Keep every other header and checksum check intact.
         let checksum = bytes[2..<10].reduce(UInt8(0x50 ^ 0x6e ^ 0x88), ^)
-        guard bytes[10] == checksum else { return nil }
+        guard bytes[10] == checksum else { return .invalid }
+        if bytes[3] == 1 { return .unsupported }
+        guard bytes[3] == 0 else { return .invalid }
         let maximum = UInt16(bytes[6]) << 8 | UInt16(bytes[7])
         let current = UInt16(bytes[8]) << 8 | UInt16(bytes[9])
         if feature == .mute {
-            guard current == 1 || current == 2 else { return nil }
+            guard current == 1 || current == 2 else { return .invalid }
         } else {
-            guard maximum > 0, current <= maximum else { return nil }
+            guard maximum > 0, current <= maximum else { return .invalid }
         }
-        return Self(current: current, maximum: maximum)
+        return .value(Self(current: current, maximum: maximum))
     }
 
     static func confirmed(_ observed: Self?, target: UInt16, feature: Feature, lg: Bool) -> Bool {

@@ -82,8 +82,14 @@ struct PanelView: View {
                         symbol: "sun.max",
                         value: display.brightness,
                         unavailable: model.display.isRefreshing ? "Reading brightness…" : "Brightness unavailable",
-                        setValue: { model.display.setBrightness($0, for: display.id) }
+                        setValue: { value in
+                            guard model.display.displays.contains(where: {
+                                $0.id == display.id && $0.screenID == display.screenID && $0.brightness != nil
+                            }) else { return }
+                            model.display.setBrightness(value, for: display.id)
+                        }
                     )
+                    .id(display.screenID)
                 }
             }
         }
@@ -95,8 +101,10 @@ struct PanelView: View {
         let role = input ? "Microphone" : "Output"
         let muted = input ? audio.inputMuted : model.outputMuted
         let level = input ? audio.inputGain : model.volume
+        let levelTarget = target(input: input, forMute: false)
+        let muteTarget = target(input: input, forMute: true)
         let levelTitle = input ? "Microphone gain" : "Output volume"
-        let needsPairing = !input && active?.isDisplay == true && model.resolvedDisplayName == nil
+        let needsPairing = !input && level == nil && active?.isDisplay == true && model.resolvedDisplayID == nil
             && model.display.displays.contains { $0.volume != nil }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
@@ -113,6 +121,7 @@ struct PanelView: View {
                     value: level,
                     unavailable: needsPairing ? "Choose a monitor in Settings…" : (input ? "Gain unavailable" : "Volume unavailable"),
                     setValue: { value in
+                        guard let levelTarget, levelTarget == target(input: input, forMute: false) else { return }
                         if input { audio.setInputGain(value) } else { model.setVolume(value) }
                     },
                     unavailableAction: needsPairing ? {
@@ -123,12 +132,36 @@ struct PanelView: View {
                     muteSymbol: input ? "mic.slash.fill" : "speaker.slash.fill",
                     muteTarget: input ? "microphone" : "output",
                     toggleMute: {
-                        guard let muted else { return }
+                        guard let muted, let muteTarget, muteTarget == target(input: input, forMute: true) else { return }
                         if input { audio.setInputMuted(!muted) } else { model.setOutputMuted(!muted) }
                     }
                 )
+                .id([levelTarget, muteTarget])
             }
         }
+    }
+
+    /// Native controls can finish a drag or press after the system switches
+    /// devices. Bind each action to the live endpoint and its control path.
+    private func target(input: Bool, forMute: Bool) -> LevelTarget? {
+        let audio = model.audio
+        guard let route = input ? audio.input : audio.output else { return nil }
+        if input {
+            guard forMute ? audio.inputMuted != nil : audio.inputGain != nil else { return nil }
+            return LevelTarget(uid: route.uid)
+        }
+        if forMute ? audio.outputMuted != nil : audio.outputVolume != nil {
+            return LevelTarget(uid: route.uid)
+        }
+        guard let id = model.resolvedDisplayID, let monitor = model.display.displays.first(where: { $0.id == id }),
+              forMute ? monitor.muted != nil : monitor.volume != nil else { return nil }
+        return LevelTarget(uid: route.uid, displayID: id, screenID: monitor.screenID)
+    }
+
+    private struct LevelTarget: Hashable {
+        let uid: String
+        var displayID: String?
+        var screenID: CGDirectDisplayID?
     }
 }
 
@@ -150,7 +183,11 @@ private struct RoutePicker: View {
             Picker(input ? "Microphone" : "Output", selection: Binding(
                 get: { active?.id },
                 set: { id in
-                    if let device = available.first(where: { $0.id == id }) { audio.select(device) }
+                    let live = input ? audio.inputs : audio.outputs
+                    guard let shown = available.first(where: { $0.id == id }),
+                          let device = live.first(where: { $0.id == shown.id && $0.uid == shown.uid }),
+                          device.isConnected, !device.isHidden else { return }
+                    audio.select(device)
                 }
             )) {
                 if active == nil { Text("Choose a device").tag(String?.none) }
@@ -191,6 +228,7 @@ private struct LevelControl: View {
                 .controlSize(.small)
                 .frame(width: 36)
                 .accessibilityLabel(action)
+                .accessibilityValue(mute ? "Muted" : "Unmuted")
                 .help(action)
             } else {
                 Image(systemName: symbol)

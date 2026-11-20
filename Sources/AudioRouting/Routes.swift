@@ -66,16 +66,18 @@ struct RoutePreferences: Codable, Equatable {
     mutating func remember(_ endpoints: [Endpoint]) {
         var portsByFamily: [String: Set<String>] = [:]
         for endpoint in endpoints {
-            if endpoint.followsPort == true, let port = PortIdentity(endpoint.uid) {
-                portsByFamily[port.family, default: []].insert(port.port)
-            }
+            var followsPort = endpoint.followsPort
             if let i = records.firstIndex(where: { $0.role == endpoint.role && $0.uid == endpoint.uid }) {
                 records[i].name = endpoint.name
                 records[i].isDisplay = endpoint.isDisplay
                 records[i].isVirtual = endpoint.isVirtual
-                if let confirmed = endpoint.followsPort { records[i].followsPort = confirmed }
+                if let confirmed = followsPort { records[i].followsPort = confirmed }
+                followsPort = records[i].followsPort
             } else {
                 records.append(RememberedRoute(endpoint))
+            }
+            if followsPort == true, let port = PortIdentity(endpoint.uid) {
+                portsByFamily[port.family, default: []].insert(port.port)
             }
         }
         for (family, ports) in portsByFamily where ports.count > 1 {
@@ -153,6 +155,7 @@ struct RoutePolicy {
     private var recentJoins: [String: TimeInterval] = [:]
     private var initialized = false
     private var awaitingInputFallback = false
+    private var pendingSelection: (target: String, superseded: Set<String>, expires: TimeInterval)?
 
     mutating func desired(current: RouteDevice?, devices: [RouteDevice], rankedIDs: Set<String>,
                           time: TimeInterval) -> RouteDevice? {
@@ -173,7 +176,21 @@ struct RoutePolicy {
             if current.role == .input, !current.isHidden { heldID = current.id }
             awaitingInputFallback = false
         }
-        if let current, let previousUID, previousUID != current.id, present.contains(previousUID),
+        // A successful set-default call can return before the getter changes.
+        // The old snapshot is neither an external pick nor a reason to repeat
+        // the write. A genuine move to a third device is still handled below.
+        let acknowledgingOwnWrite = current?.id != nil && current?.id == pendingSelection?.target
+        if let pendingSelection, present.contains(pendingSelection.target),
+           time < pendingSelection.expires, !acknowledgingOwnWrite,
+           current == nil || current.map({ pendingSelection.superseded.contains($0.id) }) == true
+                || (!initialized && previousUID == nil) {
+            connected = present
+            if let current { previousUID = current.id }
+            initialized = true
+            return nil
+        }
+        pendingSelection = nil
+        if !acknowledgingOwnWrite, let current, let previousUID, previousUID != current.id, present.contains(previousUID),
            connected.contains(current.id), recentJoins[current.id] == nil {
             heldID = current.id
         } else if !initialized, heldID != nil, let current, heldID != current.id {
@@ -193,8 +210,14 @@ struct RoutePolicy {
         return current
     }
 
-    mutating func didSelect(_ device: RouteDevice, manually: Bool) {
-        previousUID = device.id
+    mutating func didSelect(_ device: RouteDevice, manually: Bool, replacing current: RouteDevice? = nil,
+                            time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        var superseded = Set([current?.id, previousUID].compactMap { $0 })
+        if let previous = pendingSelection, time < previous.expires {
+            superseded.formUnion(previous.superseded)
+            superseded.insert(previous.target)
+        }
+        pendingSelection = (device.id, superseded, time + 1)
         if manually { heldID = device.id }
     }
 }

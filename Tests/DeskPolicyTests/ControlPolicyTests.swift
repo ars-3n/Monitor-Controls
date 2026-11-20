@@ -22,10 +22,30 @@ import DeskPolicy
     #expect(tracker.disposition(for: down, target: .monitor("LG")) == .adjust("LG"))
     #expect(tracker.disposition(for: repeated, target: .monitor("LG")) == .adjust("LG"))
     #expect(tracker.disposition(for: repeated, target: .monitor("Dell")) == .consume)
+    #expect(tracker.disposition(for: repeated, target: .monitor("LG")) == .consume)
     #expect(tracker.disposition(for: up, target: .system) == .consume)
     #expect(tracker.disposition(for: down, target: .system) == .passThrough)
     #expect(tracker.disposition(for: repeated, target: .monitor("LG")) == .passThrough)
     #expect(tracker.disposition(for: up, target: .monitor("LG")) == .passThrough)
+}
+
+@Test func cancellingSpeakerAdjustmentsLeavesBrightnessHeld() throws {
+    var tracker = PressTracker()
+    let volumeDown = try #require(MediaPress(data: 0x00010a00))
+    let volumeRepeat = try #require(MediaPress(data: 0x00010a01))
+    let volumeUp = try #require(MediaPress(data: 0x00010b00))
+    let brightnessDown = try #require(MediaPress(data: 0x00030a00))
+    let brightnessRepeat = try #require(MediaPress(data: 0x00030a01))
+    let monitor = KeyTarget.monitor("LG")
+    #expect(tracker.disposition(for: volumeDown, target: monitor) == .adjust("LG"))
+    #expect(tracker.disposition(for: brightnessDown, target: monitor) == .adjust("LG"))
+    tracker.cancelAdjustments(audioOnly: true)
+    #expect(tracker.disposition(for: volumeRepeat, target: monitor) == .consume)
+    #expect(tracker.disposition(for: brightnessRepeat, target: monitor) == .adjust("LG"))
+    tracker.cancelAdjustments()
+    #expect(tracker.disposition(for: brightnessRepeat, target: monitor) == .consume)
+    #expect(tracker.disposition(for: volumeUp, target: .system) == .consume)
+    #expect(tracker.disposition(for: volumeDown, target: monitor) == .adjust("LG"))
 }
 @Test func muteRepeatsAndUnrelatedKeys() throws {
     var tracker = PressTracker()

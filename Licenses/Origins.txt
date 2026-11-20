@@ -1,0 +1,14 @@
+Desk Controls is distributed under the GNU General Public License, version 3.
+See LICENSE for the full license.
+
+Audio device identity, preferences, and Core Audio access are adapted from
+Audio Priority Bar and its contributors.
+https://github.com/ars-3n/Audio-Priority-Bar/tree/v2.13.0
+
+Display hardware access is adapted from MonitorControl and its contributors.
+https://github.com/MonitorControl/MonitorControl/tree/v4.4.0
+See MonitorControl-MIT.txt.
+
+Apple system media-key event conventions are also used by MediaKeyTap.
+https://github.com/MonitorControl/MediaKeyTap
+See MediaKeyTap-MIT.txt.

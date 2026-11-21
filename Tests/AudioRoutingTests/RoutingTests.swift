@@ -28,7 +28,6 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(rows.first?.id == original.id)
     #expect(rows.first?.uid == usbB)
     #expect(rows.first?.isHidden == true)
-    #expect(settings.rankedIDs(for: .input).contains(try #require(rows.first).id))
 }
 
 @Test func simultaneousSiblingsRestoreIndependentIdentities() throws {
@@ -90,7 +89,8 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(rows.count == 2)
     let current = try #require(rows.first { $0.isConnected })
     #expect(!current.isHidden)
-    #expect(!settings.rankedIDs(for: .output).contains(current.id))
+    // The saved place stays with the old output. The new one follows it.
+    #expect(rows.map(\.uid) == [old.uid, new.uid])
 }
 
 @Test func independentDisplayPortsKeepOneRecoveredRowUntilBothAppear() throws {
@@ -118,9 +118,10 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(policy.desired(current: pods, devices: devices, rankedIDs: [usb.id], time: 2) == pods)
     #expect(policy.heldID == pods.id)
     #expect(policy.desired(current: pods, devices: devices + [audio("another")], rankedIDs: [usb.id], time: 3) == pods)
-    #expect(policy.desired(current: builtin, devices: [usb, builtin], rankedIDs: [usb.id], time: 4) == builtin)
-    #expect(policy.heldID == builtin.id)
-    #expect(policy.desired(current: pods, devices: devices, rankedIDs: [usb.id], time: 5) == builtin)
+    // Once the AirPods are gone the priority list decides again.
+    #expect(policy.desired(current: builtin, devices: [usb, builtin], rankedIDs: [usb.id], time: 4) == usb)
+    #expect(policy.heldID == nil)
+    #expect(policy.desired(current: pods, devices: devices, rankedIDs: [usb.id], time: 5) == usb)
 }
 
 @Test func physicalReconnectDoesNotStealHeldMicrophone() {
@@ -277,12 +278,18 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(policy.heldID == pods.id)
 }
 
-@Test func restartingAfterHeldMicrophoneDisconnectedKeepsTheMacOSFallback() {
+@Test func restartingAfterHeldMicrophoneDisconnectedReturnsToThePriorityList() {
     let usb = audio("usb"), pods = audio("pods"), builtin = audio("builtin")
     var input = RoutePolicy(heldID: pods.id)
-    #expect(input.desired(current: builtin, devices: [usb, builtin], rankedIDs: [usb.id], time: 0) == builtin)
-    #expect(input.desired(current: pods, devices: [usb, builtin, pods], rankedIDs: [usb.id], time: 1) == builtin)
-    #expect(input.heldID == builtin.id)
+    #expect(input.desired(current: builtin, devices: [usb, builtin], rankedIDs: [usb.id], time: 0) == usb)
+    #expect(input.desired(current: pods, devices: [usb, builtin, pods], rankedIDs: [usb.id], time: 1) == usb)
+    #expect(input.heldID == nil)
+
+    // With no order saved, the microphone macOS fell back to is kept.
+    var unranked = RoutePolicy(heldID: pods.id)
+    #expect(unranked.desired(current: builtin, devices: [usb, builtin], rankedIDs: [], time: 0) == builtin)
+    #expect(unranked.desired(current: pods, devices: [usb, builtin, pods], rankedIDs: [], time: 1) == builtin)
+    #expect(unranked.heldID == builtin.id)
 
     let display = audio("display", role: .output), speakers = audio("speakers", role: .output)
     var output = RoutePolicy(heldID: "disconnected-headphones")
@@ -311,11 +318,11 @@ private let usbB = "AppleUSBAudioEngine:Acme:Mic:02300000:1"
     #expect(settings.outputHold == "output:uid:speakers")
     #expect(settings.devices([builtin], role: .input).map(\.uid) == ["builtin"])
 
-    // Seen again, it starts over as a new unranked, visible row.
+    // Seen again, it starts over as a new visible row with no saved place.
     settings.remember([a, builtin])
     let returned = try #require(settings.devices([a, builtin], role: .input).first { $0.uid == usbA })
     #expect(!returned.isHidden)
-    #expect(!settings.rankedIDs(for: .input).contains(returned.id))
+    #expect(!settings.inputOrder.contains(usbA))
 }
 
 @Test func forgettingOneRoleKeepsTheSameDevicesOtherRole() throws {

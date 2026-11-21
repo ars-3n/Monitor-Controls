@@ -53,6 +53,8 @@ enum CoreAudioProperties {
                 return Endpoint(objectID: id, uid: uid, name: name, role: role,
                                 isDisplay: isDisplay && role == .output,
                                 isVirtual: transport == kAudioDeviceTransportTypeVirtual || transport == kAudioDeviceTransportTypeAggregate,
+                                // The headphone jack is built in too, but its device is there only while something is plugged in.
+                                isInternal: transport == kAudioDeviceTransportTypeBuiltIn && !uid.localizedCaseInsensitiveContains("headphone"),
                                 followsPort: followsPort)
             }
         }

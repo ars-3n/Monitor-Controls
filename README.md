@@ -27,7 +27,7 @@ Coming from Desk Controls? Quit it and move it out of Applications first. Your d
   <img src="Screenshots/devices.png" width="760" alt="The Devices page with outputs and microphones in two columns">
 </p>
 
-**Devices** lists outputs and microphones side by side. Automatic switching prefers devices higher in each list. The arrows change the order. The eye hides a device from the panel and from automatic switching. A disconnected device has a trash button that removes it from the list. Audio Priority Bar users can import their saved order once.
+**Devices** lists outputs and microphones side by side. Automatic switching prefers devices higher in each list. Until you change the order, devices you connect come first, then the Mac's own speakers and microphone, then devices created by apps. A device you pick yourself stays in use until it disconnects or a higher one connects. The arrows change the order. The eye hides a device from the panel and from automatic switching. A disconnected device has a trash button that removes it from the list. Audio Priority Bar users can import their saved order once.
 
 <p align="center">
   <img src="Screenshots/general.png" width="760" alt="The General page with startup, keyboard and update settings">

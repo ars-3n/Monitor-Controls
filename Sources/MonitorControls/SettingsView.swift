@@ -339,7 +339,7 @@ private struct DevicePriorities: View {
             VStack(alignment: .leading, spacing: 0) {
                 // Above the lists, so it is read before the numbers and
                 // stays in view however long the lists are.
-                Text("Automatic switching prefers devices higher in each list. Hidden devices are skipped.")
+                Text("Automatic switching prefers devices higher in each list. Hidden devices are skipped. A device you pick yourself stays in use until it disconnects or a higher one connects.")
                     .font(DeskType.body)
                     .foregroundStyle(.secondary)
                     .settingsFooter()

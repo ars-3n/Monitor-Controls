@@ -22,6 +22,8 @@ struct Endpoint: Equatable, Sendable {
     var role: RouteRole
     var isDisplay = false
     var isVirtual = false
+    /// Part of the Mac and always present: its own speakers or microphone.
+    var isInternal = false
     var followsPort: Bool? = false
 }
 
@@ -31,6 +33,7 @@ struct RememberedRoute: Codable, Equatable {
     let role: RouteRole
     var isDisplay: Bool
     var isVirtual: Bool
+    var isInternal: Bool
     var followsPort: Bool?
     var hidden: Bool?
     var hiddenRevision = 0
@@ -41,6 +44,7 @@ struct RememberedRoute: Codable, Equatable {
         role = endpoint.role
         isDisplay = endpoint.isDisplay
         isVirtual = endpoint.isVirtual
+        isInternal = endpoint.isInternal
         followsPort = endpoint.followsPort
     }
 }
@@ -53,6 +57,9 @@ struct RoutePreferences: Codable, Equatable {
     var importedLegacy = false
     var inputHold: String?
     var outputHold: String?
+    /// The devices that were connected when each hold was made and have stayed connected.
+    var inputPassedOver: Set<String> = []
+    var outputPassedOver: Set<String> = []
     // A scalar fallback must survive app restarts. Zero without a recorded
     // app-initiated mute is simply a volume level, not a reversible mute.
     var levelsBeforeMute: [String: Double] = [:]
@@ -71,6 +78,7 @@ struct RoutePreferences: Codable, Equatable {
                 records[i].name = endpoint.name
                 records[i].isDisplay = endpoint.isDisplay
                 records[i].isVirtual = endpoint.isVirtual
+                records[i].isInternal = endpoint.isInternal
                 if let confirmed = followsPort { records[i].followsPort = confirmed }
                 followsPort = records[i].followsPort
             } else {
@@ -93,6 +101,8 @@ struct RoutePreferences: Codable, Equatable {
         return "\(role):uid:\(record.uid)"
     }
 
+    /// The devices in priority order. This is the order Settings shows and
+    /// the order automatic switching follows.
     func devices(_ endpoints: [Endpoint], role: RouteRole) -> [RouteDevice] {
         // Coalesce ports only while the evidence supports it. Keep original
         // per-port settings intact so discovering two identical devices can
@@ -100,24 +110,33 @@ struct RoutePreferences: Codable, Equatable {
         let groups = Dictionary(grouping: records.filter { $0.role == role }, by: identifier)
         let ranks = Dictionary(order(for: role).enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
         let connected = Set(endpoints.filter { $0.role == role }.map(\.uid))
-        return groups.map { id, group in
+        let rows = groups.map { id, group in
             let current = group.first { connected.contains($0.uid) }
             let record = current ?? group.last!
             let visibility = group.filter { $0.hidden != nil }.max { $0.hiddenRevision < $1.hiddenRevision }
-            return (RouteDevice(id: id, uid: record.uid, name: record.name, role: role, isDisplay: record.isDisplay,
-                                isHidden: visibility?.hidden ?? false, isConnected: current != nil, isVirtual: record.isVirtual),
-                    group.compactMap { ranks[$0.uid] }.min() ?? Int.max)
-        }.sorted { lhs, rhs in
-            if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
-            let comparison = lhs.0.name.localizedStandardCompare(rhs.0.name)
-            return comparison == .orderedSame ? lhs.0.id < rhs.0.id : comparison == .orderedAscending
-        }.map(\.0)
-    }
-
-    func rankedIDs(for role: RouteRole) -> Set<String> {
-        let ranked = Set(order(for: role))
-        guard !ranked.isEmpty else { return [] }
-        return Set(records.lazy.filter { $0.role == role && ranked.contains($0.uid) }.map(identifier))
+            return (device: RouteDevice(id: id, uid: record.uid, name: record.name, role: role, isDisplay: record.isDisplay,
+                                        isHidden: visibility?.hidden ?? false, isConnected: current != nil, isVirtual: record.isVirtual),
+                    rank: group.compactMap { ranks[$0.uid] }.min(),
+                    // Something the user connects, then the Mac's own, then a device an app created.
+                    kind: record.isVirtual ? 2 : record.isInternal ? 1 : 0)
+        }
+        func byName(_ lhs: RouteDevice, _ rhs: RouteDevice) -> Bool {
+            let comparison = lhs.name.localizedStandardCompare(rhs.name)
+            return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
+        }
+        var ordered = rows.filter { $0.rank != nil }.sorted {
+            $0.rank! != $1.rank! ? $0.rank! < $1.rank! : byName($0.device, $1.device)
+        }
+        // A device that was never given a place goes below the last device
+        // of its kind or a kind before it, and above everything if there is none.
+        let unplaced = rows.filter { $0.rank == nil }.sorted {
+            $0.kind != $1.kind ? $0.kind < $1.kind : byName($0.device, $1.device)
+        }
+        for row in unplaced {
+            let above = ordered.lastIndex { $0.kind <= row.kind }
+            ordered.insert(row, at: above.map { $0 + 1 } ?? 0)
+        }
+        return ordered.map(\.device)
     }
 
     mutating func setHidden(_ value: Bool, device: RouteDevice) {
@@ -176,6 +195,7 @@ extension RememberedRoute {
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? uid
         isDisplay = try values.decodeIfPresent(Bool.self, forKey: .isDisplay) ?? false
         isVirtual = try values.decodeIfPresent(Bool.self, forKey: .isVirtual) ?? false
+        isInternal = try values.decodeIfPresent(Bool.self, forKey: .isInternal) ?? false
         followsPort = try values.decodeIfPresent(Bool.self, forKey: .followsPort)
         hidden = try values.decodeIfPresent(Bool.self, forKey: .hidden)
         hiddenRevision = try values.decodeIfPresent(Int.self, forKey: .hiddenRevision) ?? 0
@@ -201,6 +221,9 @@ extension RoutePreferences {
         importedLegacy = (try? values.decode(Bool.self, forKey: .importedLegacy)) ?? false
         inputHold = try? values.decode(String.self, forKey: .inputHold)
         outputHold = try? values.decode(String.self, forKey: .outputHold)
+        // A hold saved without this list gives way to any higher device that is connected.
+        inputPassedOver = Set((try? values.decode([SavedValue<String>].self, forKey: .inputPassedOver))?.compactMap(\.value) ?? [])
+        outputPassedOver = Set((try? values.decode([SavedValue<String>].self, forKey: .outputPassedOver))?.compactMap(\.value) ?? [])
         let savedLevels = (try? values.decode([String: SavedValue<Double>].self, forKey: .levelsBeforeMute)) ?? [:]
         levelsBeforeMute = savedLevels.compactMapValues { entry in
             guard let level = entry.value, (0...1).contains(level) else { return nil }
@@ -210,16 +233,35 @@ extension RoutePreferences {
 }
 
 struct RoutePolicy {
-    var heldID: String?
+    /// A device picked by hand, here or in macOS. It comes before the priority
+    /// list until it disconnects or a device above it in the list connects.
+    private(set) var heldID: String?
+    /// The devices that were connected when the pick was made and have stayed
+    /// connected. A higher device missing from this set has arrived since.
+    private(set) var passedOver: Set<String>
+    private var capturePassedOver = false
     private var connected: Set<String> = []
     private var previousUID: String?
-    private var recentJoins: [String: TimeInterval] = [:]
+    private var topologyChangedAt: TimeInterval?
     private var initialized = false
     private var awaitingInputFallback = false
     private var pendingSelection: (target: String, superseded: Set<String>, expires: TimeInterval)?
 
-    init(heldID: String? = nil) {
+    init(heldID: String? = nil, passedOver: Set<String> = []) {
         self.heldID = heldID
+        self.passedOver = heldID == nil ? [] : passedOver
+    }
+
+    mutating func release() {
+        heldID = nil
+        passedOver = []
+        capturePassedOver = false
+    }
+
+    private mutating func hold(_ id: String, among present: Set<String>) {
+        heldID = id
+        passedOver = present
+        capturePassedOver = false
     }
 
     mutating func desired(current: RouteDevice?, devices: [RouteDevice], rankedIDs: Set<String>,
@@ -229,18 +271,21 @@ struct RoutePolicy {
         // HAL can publish connected devices before the default at login.
         // Preserve the saved choice until we can compare it with macOS.
         if !initialized, current == nil { return nil }
-        recentJoins = recentJoins.filter { present.contains($0.key) && time - $0.value < 5 }
-        if initialized {
-            for id in present.subtracting(connected) { recentJoins[id] = time }
-        }
-        if let heldID, !present.contains(heldID) {
-            self.heldID = nil
+        // macOS moves the defaults by itself while devices come and go.
+        if initialized, present != connected { topologyChangedAt = time }
+        let settling = topologyChangedAt.map { time - $0 < 5 } ?? false
+        let topRanked = live.first { rankedIDs.contains($0.id) && !$0.isHidden }
+        if heldID.map(present.contains) == false {
+            release()
             // Volatile snapshots may briefly have no default at all. Pin the
             // eventual replacement mic as soon as macOS publishes it.
             awaitingInputFallback = devices.first?.role == .input || devices.isEmpty
         }
         if awaitingInputFallback, let current {
-            if current.role == .input, !current.isHidden { heldID = current.id }
+            // The priority list picks the replacement when it has one. Without
+            // one, keep the microphone macOS fell back to, so a headset that
+            // reconnects later does not take over.
+            if current.role == .input, !current.isHidden, topRanked == nil { hold(current.id, among: present) }
             awaitingInputFallback = false
         }
         // A successful set-default call can return before the getter changes.
@@ -258,19 +303,33 @@ struct RoutePolicy {
         }
         pendingSelection = nil
         if !acknowledgingOwnWrite, let current, let previousUID, previousUID != current.id, present.contains(previousUID),
-           connected.contains(current.id), recentJoins[current.id] == nil {
-            heldID = current.id
+           connected.contains(current.id), !settling {
+            hold(current.id, among: present)
         } else if !initialized, heldID != nil, let current, heldID != current.id {
             // An explicit choice made while the app wasn't running wins.
-            heldID = current.id
+            hold(current.id, among: present)
         }
         // During handover macOS may temporarily have no default. Preserve
         // the last known device so a subsequent external pick is recognized.
         if let current { previousUID = current.id }
         connected = present
         initialized = true
+        if capturePassedOver {
+            passedOver = present
+            capturePassedOver = false
+        } else {
+            passedOver.formIntersection(present)
+        }
+        // The devices are in priority order. A hand pick was made knowing the
+        // higher ones in `passedOver`. One that connects later ends it.
+        if let place = devices.firstIndex(where: { $0.id == heldID }),
+           devices[..<place].contains(where: {
+               $0.isConnected && !$0.isHidden && rankedIDs.contains($0.id) && !passedOver.contains($0.id)
+           }) {
+            release()
+        }
         if let held = live.first(where: { $0.id == heldID }) { return held }
-        if let ranked = live.first(where: { rankedIDs.contains($0.id) && !$0.isHidden }) { return ranked }
+        if let topRanked { return topRanked }
         if current?.isHidden == true {
             return live.first { !$0.isHidden && !$0.isVirtual } ?? live.first { !$0.isHidden } ?? current
         }
@@ -285,6 +344,11 @@ struct RoutePolicy {
             superseded.insert(previous.target)
         }
         pendingSelection = (device.id, superseded, time + 1)
-        if manually { heldID = device.id }
+        if manually {
+            heldID = device.id
+            // Filled in from the next device list, which is read right after the pick.
+            passedOver = []
+            capturePassedOver = true
+        }
     }
 }

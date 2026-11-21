@@ -70,8 +70,8 @@ struct AudioSnapshot: Sendable {
             }
             preferences = RoutePreferences()
         }
-        policies[.input] = RoutePolicy(heldID: preferences.inputHold)
-        policies[.output] = RoutePolicy(heldID: preferences.outputHold)
+        policies[.input] = RoutePolicy(heldID: preferences.inputHold, passedOver: preferences.inputPassedOver)
+        policies[.output] = RoutePolicy(heldID: preferences.outputHold, passedOver: preferences.outputPassedOver)
         canImportLegacyPreferences = !preferences.importedLegacy && RoutePreferences.containsLegacyChoices(
             defaults.persistentDomain(forName: "app.audioprioritybar") ?? [:])
     }
@@ -79,8 +79,8 @@ struct AudioSnapshot: Sendable {
     public func start() {
         guard !running else { return }
         running = true
-        policies[.input] = RoutePolicy(heldID: preferences.inputHold)
-        policies[.output] = RoutePolicy(heldID: preferences.outputHold)
+        policies[.input] = RoutePolicy(heldID: preferences.inputHold, passedOver: preferences.inputPassedOver)
+        policies[.output] = RoutePolicy(heldID: preferences.outputHold, passedOver: preferences.outputPassedOver)
         listeners.receive = { [weak self] event in self?.handle(event) }
         attachListeners()
         refresh()
@@ -225,7 +225,8 @@ struct AudioSnapshot: Sendable {
             if retriesRemaining > 0, update.endpoints.contains(where: { $0.role == role && $0.followsPort == nil }) { continue }
             let current = role == .input ? newInput : newOutput
             let devices = role == .input ? inputs : outputs
-            let ranked = preferences.rankedIDs(for: role)
+            // Every listed device has a place in the order, saved or not.
+            let ranked = Set(devices.map(\.id))
             let desired = policies[role, default: RoutePolicy()].desired(current: current, devices: devices, rankedIDs: ranked,
                                                                         time: ProcessInfo.processInfo.systemUptime)
             if let desired, desired.id != current?.id, let current, let old = endpoint(current), CoreAudioProperties.isCurrent(old),
@@ -345,7 +346,7 @@ struct AudioSnapshot: Sendable {
     public func move(_ device: RouteDevice, by offset: Int) {
         let before = preferences
         guard preferences.move(device, by: offset, in: device.role == .input ? inputs : outputs) else { return }
-        policies[device.role]?.heldID = nil
+        policies[device.role]?.release()
         persistIfChanged(since: before)
         if let snapshot { apply(snapshot) }
     }
@@ -353,7 +354,7 @@ struct AudioSnapshot: Sendable {
     public func setHidden(_ hidden: Bool, for device: RouteDevice) {
         let before = preferences
         preferences.setHidden(hidden, device: device)
-        if hidden, policies[device.role]?.heldID == device.id { policies[device.role]?.heldID = nil }
+        if hidden, policies[device.role]?.heldID == device.id { policies[device.role]?.release() }
         persistIfChanged(since: before)
         if let snapshot { apply(snapshot) }
     }
@@ -365,7 +366,7 @@ struct AudioSnapshot: Sendable {
         guard let row = rows.first(where: { $0.id == device.id }), !row.isConnected else { return false }
         let before = preferences
         preferences.forget(row)
-        if policies[row.role]?.heldID == row.id { policies[row.role]?.heldID = nil }
+        if policies[row.role]?.heldID == row.id { policies[row.role]?.release() }
         persistIfChanged(since: before)
         let remaining = preferences.devices(snapshot?.endpoints ?? [], role: row.role)
         if row.role == .input { inputs = remaining } else { outputs = remaining }
@@ -394,6 +395,8 @@ struct AudioSnapshot: Sendable {
     private func persistIfChanged(since previous: RoutePreferences) {
         preferences.inputHold = policies[.input]?.heldID
         preferences.outputHold = policies[.output]?.heldID
+        preferences.inputPassedOver = policies[.input]?.passedOver ?? []
+        preferences.outputPassedOver = policies[.output]?.passedOver ?? []
         if preferences != previous { save() }
     }
 

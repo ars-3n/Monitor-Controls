@@ -1,53 +1,83 @@
-# Monitor Controls
-
-A macOS menu-bar app for external monitor brightness, speaker volume and the microphone. It needs a Mac with Apple silicon and macOS 14 or later.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/readme/hero-dark.jpg">
+    <img src=".github/readme/hero-light.jpg" width="880" alt="Monitor Controls: brightness, volume and microphone controls for external monitors in the macOS menu bar. The panel is open under its menu-bar icon with brightness sliders for two monitors, the output volume and the microphone gain.">
+  </picture>
+</p>
 
 <p align="center">
-  <img src="Screenshots/panel.png" width="458" alt="The Monitor Controls panel with brightness, output and microphone sliders">
+  <a href="https://github.com/ars-3n/Monitor-Controls/releases/latest/download/MonitorControls.zip">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/readme/download-dark.png">
+      <img src=".github/readme/download-light.png" width="300" alt="Download Monitor Controls for Mac">
+    </picture>
+  </a>
 </p>
+
+<p align="center"><sub>Free and open source&nbsp;&nbsp;·&nbsp;&nbsp;macOS 14 or later&nbsp;&nbsp;·&nbsp;&nbsp;Apple silicon</sub></p>
+
+<br>
+
+macOS can't set the brightness or the speaker volume of most external monitors. Monitor Controls can. It talks to the display over DDC/CI, the control link that runs through the display cable, and puts the controls in a small panel in the menu bar. It also keeps sound and the microphone on the devices you rank highest as you plug things in and out.
+
+### A brightness slider for each monitor
+
+Every external monitor gets its own slider, and the display changes while you drag. The little monitor next to the slider gets darker and lighter with it.
+
+### The brightness keys work on your monitor
+
+Turn on **Use brightness and volume keys** in Settings and the keys on your Mac's keyboard control external monitors too. Brightness keys change the display under the pointer, and a small indicator under the menu-bar icon shows the new level. Volume and mute follow the active output.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/readme/keys-dark.jpg">
+    <img src=".github/readme/keys-light.jpg" width="880" alt="The brightness indicator under the Monitor Controls menu-bar icon after a press of the F2 brightness key">
+  </picture>
+</p>
+
+### Volume for any output, gain for any microphone
+
+The output slider follows whatever is playing sound. Monitor speakers are set over DDC/CI. Any other output, such as AirPods, uses the macOS volume. The microphone row sets input gain and mute when the device supports them. Each row lists your three highest-ranked devices, so switching is one click.
+
+### Sound goes where you want it
+
+Put your outputs and microphones in order in Settings. When a device higher in the list connects, Monitor Controls switches to it, and when it disconnects, the next one takes over. A device you pick yourself stays in use until it disconnects or a higher one connects.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/readme/devices-dark.jpg">
+    <img src=".github/readme/devices-light.jpg" width="880" alt="The Devices page in Settings with outputs and microphones in two ranked lists">
+  </picture>
+</p>
+
+Until you change the order, devices you connect come first, then the Mac's own speakers and microphone, then devices created by apps. The eye button hides a device you never want, such as the virtual one a meeting app installs, from the panel and from automatic switching. Disconnected devices get a trash button. Audio Priority Bar users can import their saved order once.
+
+### Updates from inside the app
+
+**Check for Updates** in Settings looks for a newer release on GitHub only when you press it. **Install and Relaunch** then swaps in the new version.
 
 ## Install
 
 1. Download [MonitorControls.zip](https://github.com/ars-3n/Monitor-Controls/releases/latest/download/MonitorControls.zip) and unzip it.
-2. Drag **Monitor Controls.app** into Applications and open it.
-3. Click the monitor icon with three sound-level bars in the menu bar. Right-click it to quit.
+2. Move **Monitor Controls.app** to Applications and open it.
+3. Click the monitor icon in the menu bar. Right-click it for Settings and Quit.
+
+> [!NOTE]
+> Releases aren't notarized, so the first time you open the app macOS says it can't verify it. Close the message, go to **System Settings → Privacy & Security**, and click **Open Anyway** next to the line about Monitor Controls.
 
 Coming from Desk Controls? Quit it and move it out of Applications first. Your device preferences carry over.
 
-## The panel
+## Good to know
 
-- Each external monitor has its own brightness slider. The app sets brightness over DDC/CI as you drag.
-- Volume and mute follow the current sound output. Monitor speakers are set over DDC/CI. AirPods and other outputs use the macOS volume.
-- The microphone row sets input gain and mute when the device supports them.
-- Each audio row lists its three highest-priority devices. Click one to switch to it. **Show all** opens the full list when there are more.
+- Brightness and monitor volume depend on DDC/CI. Some docks and adapters don't pass it through, and some monitors have it switched off in their own menu. The panel says which controls are unavailable.
+- The keys need access in **System Settings → Privacy & Security → Accessibility**. If you also run MonitorControl, turn off its key handling so one app handles each keypress.
+- When a monitor's speakers are the active output, Settings → General shows which display the volume slider controls. Change it when two displays share a name or the output and display names differ.
+- Releases have no Developer ID signature or notarization. An update installs itself only if it is signed with the same certificate as the running copy. An ad-hoc build opens the release page for a manual download.
 
-## Settings
+<details>
+<summary><b>Build from source</b></summary>
 
-<p align="center">
-  <img src="Screenshots/devices.png" width="760" alt="The Devices page with outputs and microphones in two columns">
-</p>
-
-**Devices** lists outputs and microphones side by side. Automatic switching prefers devices higher in each list. Until you change the order, devices you connect come first, then the Mac's own speakers and microphone, then devices created by apps. A device you pick yourself stays in use until it disconnects or a higher one connects. The arrows change the order. The eye hides a device from the panel and from automatic switching. A disconnected device has a trash button that removes it from the list. Audio Priority Bar users can import their saved order once.
-
-<p align="center">
-  <img src="Screenshots/general.png" width="760" alt="The General page with startup, keyboard and update settings">
-</p>
-
-**General** has these settings:
-
-- Open at login.
-- Use the Apple brightness and volume keys. Brightness keys act on the display under the pointer. A small indicator under the menu-bar icon shows the new brightness. This needs access in **System Settings → Privacy & Security → Accessibility**. If you also run MonitorControl, turn off its key handling so one app handles each keypress.
-- Check for Updates. The app looks for a newer release on GitHub only when you press the button. **Install and Relaunch** then replaces the app with the new version.
-
-When a monitor's speakers are the active output, General also shows which display the volume slider controls. Change it when two displays share a name or the output and display names differ.
-
-## Limits
-
-- Brightness and monitor volume depend on DDC/CI. Some docks do not carry it, and some monitors have it switched off in their own menu. The panel says which controls are unavailable.
-- Releases have no Developer ID signature or notarization.
-- An update installs itself only if it is signed with the same certificate as the running copy. An ad-hoc build opens the release page for a manual download.
-
-## Build
+<br>
 
 Use Xcode with Swift 6.2 or later.
 
@@ -70,8 +100,10 @@ With exactly one LG ULTRAWIDE connected, a hardware test makes small changes to 
 DESK_CONTROLS_TEST_LG=1 swift test --filter LGHardwareTests
 ```
 
-## Source
-
 AppKit runs the menu bar and SwiftUI draws the panel and Settings. `AudioRouting` watches Core Audio devices, `DisplayHardware` talks to displays, `DeskPolicy` decides speaker pairing and media-key ownership, `AppUpdate` installs releases, and `DisplayBridge` is a small C layer over the macOS display transports.
 
-Monitor Controls includes work from Audio Priority Bar and MonitorControl. See [LICENSE](LICENSE) and the [origin and license notices](Licenses/Origins.txt).
+</details>
+
+## License
+
+Monitor Controls is free software under the [GPL-3.0](LICENSE). It includes work from Audio Priority Bar and MonitorControl; see the [origin and license notices](Licenses/Origins.txt).

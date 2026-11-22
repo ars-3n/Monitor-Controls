@@ -8,46 +8,18 @@ permissions:
   contents: read
 
 jobs:
-  commits:
-    runs-on: ubuntu-latest
-    outputs:
-      revisions: ${{ steps.list.outputs.revisions }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: List commits added to main
-        id: list
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          range="$GITHUB_SHA"
-          if [[ "$BEFORE" != 0000000000000000000000000000000000000000 ]]; then
-            git cat-file -e "$BEFORE^{commit}" || git fetch origin "$BEFORE"
-            range="$BEFORE..$GITHUB_SHA"
-          fi
-          revisions=$(git rev-list --reverse "$range" | jq -Rsc 'split("\n") | map(select(length > 0))')
-          echo "revisions=$revisions" >> "$GITHUB_OUTPUT"
-
+  # A push can carry several commits. Only the last one is released.
   release:
-    needs: commits
-    if: needs.commits.outputs.revisions != '[]'
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        revision: ${{ fromJSON(needs.commits.outputs.revisions) }}
-    name: Release ${{ matrix.revision }}
+    name: Release ${{ github.sha }}
     runs-on: macos-26
     permissions:
       contents: write
-    concurrency: release-${{ matrix.revision }}
+    concurrency: release-${{ github.sha }}
     env:
-      REVISION: ${{ matrix.revision }}
+      REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ matrix.revision }}
           persist-credentials: false
       - name: Test
         run: swift test

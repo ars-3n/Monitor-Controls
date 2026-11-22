@@ -88,6 +88,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         }
         model.start()
         followLevels()
+        SymbolFit.shared.prepare(panelCircleSymbols(), scales: Set(NSScreen.screens.map(\.backingScaleFactor)))
     }
 
     /// Keeps the icon's knobs on the current brightness and volume.

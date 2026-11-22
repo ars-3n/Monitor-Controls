@@ -341,6 +341,15 @@ private struct RouteRow: View {
     }
 }
 
+/// The symbols the panel puts in circles, so their centered sizes can be found at launch.
+@MainActor
+func panelCircleSymbols() -> [CenteredSymbol] {
+    let devices = ["display", "airpodsmax", "airpodspro", "airpods", "laptopcomputer", "iphone", "headphones", "mic", "hifispeaker", "ellipsis"]
+    let mutes = ["mic.fill", "mic.slash.fill", "speaker.wave.2.fill", "speaker.slash.fill"]
+    return devices.map { CenteredSymbol(name: $0, pointSize: 11, weight: .semibold, side: 22) }
+        + mutes.map { CenteredSymbol(name: $0, pointSize: 16, weight: .medium, side: 28) }
+}
+
 private struct RouteRowLabel: View {
     static let inset: CGFloat = 7
 
@@ -351,10 +360,8 @@ private struct RouteRowLabel: View {
     var body: some View {
         HStack(spacing: 8) {
             // The active device has its icon on the accent color, as in Control Center.
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+            CenteredSymbol(name: symbol, pointSize: 11, weight: .semibold, side: 22)
                 .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                .frame(width: 22, height: 22)
                 .background(Circle().fill(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary.opacity(0.1))))
                 .accessibilityHidden(true)
             Text(name)
@@ -378,15 +385,14 @@ private struct MuteControl: View {
     var body: some View {
         let liveSymbol = input ? "mic.fill" : "speaker.wave.2.fill"
         let muteSymbol = input ? "mic.slash.fill" : "speaker.slash.fill"
-        let glyph = Image(systemName: muted == true ? muteSymbol : liveSymbol)
-            .font(.system(size: 16, weight: .medium))
-            .frame(width: 28, height: 28)
+        let glyph = CenteredSymbol(name: muted == true ? muteSymbol : liveSymbol, pointSize: 16, weight: .medium, side: 28)
         Group {
             if let muted {
                 let action = (muted ? "Unmute " : "Mute ") + (input ? "microphone" : "output")
                 Button(action: toggle) { glyph }
                     .buttonBorderShape(.circle)
-                    .deskGlassButton()
+                    // A muted device is easy to forget, so its button is red like the one in a call.
+                    .deskGlassButton(filled: muted ? .red : nil)
                     .accessibilityLabel(action)
                     .accessibilityValue(muted ? "Muted" : "Unmuted")
                     .help(action)

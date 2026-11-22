@@ -11,11 +11,11 @@ enum DeskType {
 
 extension View {
     @ViewBuilder
-    func deskGlassButton() -> some View {
+    func deskGlassButton(filled tint: Color? = nil) -> some View {
         if #available(macOS 26, *) {
-            buttonStyle(.glass)
+            if let tint { buttonStyle(.glassProminent).tint(tint) } else { buttonStyle(.glass) }
         } else {
-            buttonStyle(.bordered)
+            if let tint { buttonStyle(.borderedProminent).tint(tint) } else { buttonStyle(.bordered) }
         }
     }
 }

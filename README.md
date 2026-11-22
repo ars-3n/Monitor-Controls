@@ -26,7 +26,7 @@ Every external monitor gets its own slider, and the display changes while you dr
 
 ### The brightness keys work on your monitor
 
-Turn on **Use brightness and volume keys** in Settings and the keys on your Mac's keyboard control external monitors too. Brightness keys change the display under the pointer, and a small indicator under the menu-bar icon shows the new level. Volume and mute follow the active output.
+Turn on **Brightness and volume keys** in Settings and the keys on your Mac's keyboard control external monitors too. Brightness keys change the display under the pointer, and a small indicator under the menu-bar icon shows the new level. Volume and mute follow the active output.
 
 <p align="center">
   <picture>

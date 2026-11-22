@@ -11,32 +11,15 @@ struct SettingsView: View {
     @State private var importResult: String?
 
     var body: some View {
-        // The system split view supplies the sidebar, its material and the
-        // title bar on every macOS version.
-        NavigationSplitView(columnVisibility: .constant(.all)) {
-            List(selection: Binding<SettingsSection?>(
-                get: { navigation.section },
-                set: { if let section = $0 { navigation.section = section } }
-            )) {
-                Label("Devices", systemImage: "headphones")
-                    .tag(SettingsSection.devices)
-                Label("General", systemImage: "gearshape")
-                    .tag(SettingsSection.general)
+        // The window's toolbar holds the two tabs. See SettingsTabs.
+        Group {
+            switch navigation.section {
+            case .general:
+                GeneralSettings(model: model, navigation: navigation)
+            case .devices:
+                DevicePriorities(model: model, importResult: importResult,
+                                 requestImport: { confirmImport = true })
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 230)
-            .toolbar(removing: .sidebarToggle)
-            .accessibilityLabel("Settings sections")
-        } detail: {
-            Group {
-                switch navigation.section {
-                case .general:
-                    GeneralSettings(model: model, navigation: navigation)
-                case .devices:
-                    DevicePriorities(model: model, importResult: importResult,
-                                     requestImport: { confirmImport = true })
-                }
-            }
-            .navigationTitle(sectionTitle)
         }
         .sheet(isPresented: $confirmImport) {
             VStack(alignment: .leading, spacing: 14) {
@@ -66,13 +49,6 @@ struct SettingsView: View {
             .frame(width: 420)
         }
     }
-
-    private var sectionTitle: String {
-        switch navigation.section {
-        case .general: "General"
-        case .devices: "Devices"
-        }
-    }
 }
 
 private struct GeneralSettings: View {
@@ -84,8 +60,42 @@ private struct GeneralSettings: View {
         ScrollViewReader { scroll in
             Form {
                 Section {
+                    let waiting = model.keysEnabled && !model.keysAuthorized
+                    if waiting {
+                        LabeledContent {
+                            Button(action: model.requestKeyAccess) { Text("Allow Access…").font(DeskType.control) }
+                                .controlSize(.regular)
+                        } label: {
+                            SettingLabel(symbol: "exclamationmark.triangle.fill", color: .yellow,
+                                         title: "Keyboard access needed",
+                                         detail: "Allow Monitor Controls in Accessibility settings to use these keys.")
+                        }
+                    }
+                    Toggle(isOn: Binding(get: { model.keysEnabled }, set: { model.setKeysEnabled($0) })) {
+                        SettingLabel(symbol: "keyboard", color: .orange,
+                                     title: "Brightness and volume keys",
+                                     detail: "Brightness keys change the display under the pointer.",
+                                     dimmed: waiting)
+                    }
+                    .controlSize(.regular)
+                    if let message = model.keyboardMessage {
+                        feedback(message)
+                    }
+                    if let output = model.audio.output, output.isDisplay,
+                       model.audio.outputVolume == nil || model.audio.outputMuted == nil {
+                        MonitorPairing(model: model, output: output, pairingFocused: $pairingFocused)
+                    }
+                } header: {
+                    Text("Keyboard").font(DeskType.device)
+                }
+
+                if let message = model.statusMessage {
+                    Section { feedback(message) }
+                }
+
+                Section {
                     Toggle(isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) })) {
-                        Text("Open at login").font(DeskType.body)
+                        SettingLabel(symbol: "power", color: .green, title: "Open at login")
                     }
                     .controlSize(.regular)
                     if model.loginApprovalPending {
@@ -95,57 +105,23 @@ private struct GeneralSettings: View {
                     if let message = model.loginMessage {
                         feedback(message)
                     }
-                } header: {
-                    Text("Startup").font(DeskType.device)
-                }
-
-                Section {
-                    Toggle(isOn: Binding(get: { model.keysEnabled }, set: { model.setKeysEnabled($0) })) {
-                        Text("Use brightness and volume keys").font(DeskType.body)
-                    }
-                    .controlSize(.regular)
-                    if model.keysEnabled && !model.keysAuthorized {
-                        settingsAction("Allow keyboard control in Accessibility settings.",
-                                       button: "Grant Access…", action: model.requestKeyAccess)
-                    }
-                    if let message = model.keyboardMessage {
-                        feedback(message)
-                    }
-                } header: {
-                    Text("Keyboard").font(DeskType.device)
-                } footer: {
-                    Text("Brightness keys adjust the display under the pointer. Volume and mute follow the active output.")
-                        .font(DeskType.body)
-                        .foregroundStyle(.secondary)
-                        .settingsFooter()
-                }
-
-                if let output = model.audio.output, output.isDisplay,
-                   model.audio.outputVolume == nil || model.audio.outputMuted == nil {
-                    MonitorPairing(model: model, output: output, pairingFocused: $pairingFocused)
-                }
-
-                if let message = model.statusMessage {
-                    Section { feedback(message) }
-                }
-
-                Section {
                     updateRows
                 } header: {
-                    Text("Updates").font(DeskType.device)
+                    Text("App").font(DeskType.device)
                 } footer: {
-                    // The version line is the last thing on the page and
-                    // scrolls with it.
-                    VStack(spacing: 28) {
-                        Text("Monitor Controls looks for a new version on GitHub only when you press the button.")
-                            .font(DeskType.body)
-                            .foregroundStyle(.secondary)
-                            .settingsFooter()
-                        about
-                    }
+                    // The last thing on the page. It scrolls with it.
+                    Link("Monitor Controls on GitHub", destination: model.updates.repository)
+                        .help(model.updates.repository.absoluteString)
+                        .font(DeskType.body)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 16)
                 }
             }
             .formStyle(.grouped)
+            // The window is wide for the two device lists. These rows read
+            // better when the label and its control stay close.
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
             .task(id: navigation.pairingRequest) {
                 guard navigation.pairingRequest > 0 else { return }
                 scroll.scrollTo("monitor-pairing", anchor: .center)
@@ -153,21 +129,6 @@ private struct GeneralSettings: View {
                 navigation.pairingRequest = 0
             }
         }
-    }
-
-    private var about: some View {
-        let updates = model.updates
-        return HStack(spacing: 6) {
-            Group {
-                Text("Monitor Controls \(updates.version)")
-                Text("·").accessibilityHidden(true)
-            }
-            .foregroundStyle(.secondary)
-            Link("GitHub", destination: updates.repository)
-                .help(updates.repository.absoluteString)
-        }
-        .font(DeskType.body)
-        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder private var updateRows: some View {
@@ -187,7 +148,21 @@ private struct GeneralSettings: View {
             } else {
                 // One row for every other state, so only its text changes.
                 let row = updateRow(updates)
-                settingsAction(row.text, busy: updates.isBusy, button: row.button, action: row.action)
+                LabeledContent {
+                    HStack(spacing: 12) {
+                        // Always laid out, so the row keeps its shape while work is under way.
+                        ProgressView()
+                            .controlSize(.small)
+                            .opacity(updates.isBusy ? 1 : 0)
+                            .accessibilityHidden(!updates.isBusy)
+                        Button(action: row.action) { Text(row.button).font(DeskType.control) }
+                            .controlSize(.regular)
+                            .disabled(updates.isBusy)
+                    }
+                } label: {
+                    SettingLabel(symbol: "arrow.triangle.2.circlepath", color: .gray, title: row.text,
+                                 detail: "Checks GitHub only when you press the button.")
+                }
             }
         }
         .animation(.easeInOut(duration: 0.2), value: updates.state)
@@ -213,30 +188,19 @@ private struct GeneralSettings: View {
         }
     }
 
-    /// A line of text with one button. `busy` reserves room for a spinner
-    /// beside the button, so the row keeps its shape while work is under way.
-    private func settingsAction(_ explanation: String, busy: Bool? = nil, button: String,
-                                action: @escaping () -> Void) -> some View {
+    /// A line of text with one button.
+    private func settingsAction(_ explanation: String, button: String, action: @escaping () -> Void) -> some View {
         let actionButton = Button(action: action) { Text(button).font(DeskType.control) }
             .controlSize(.regular)
-            .disabled(busy == true)
-        let spinner = ProgressView()
-            .controlSize(.small)
-            .opacity(busy == true ? 1 : 0)
-            .accessibilityHidden(busy != true)
         return ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
-                Text(explanation).fixedSize().contentTransition(.opacity)
+                Text(explanation).fixedSize()
                 Spacer(minLength: 0)
-                if busy != nil { spinner }
                 actionButton.fixedSize()
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(explanation).fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 12) {
-                    actionButton
-                    if busy != nil { spinner }
-                }
+                actionButton
             }
         }
         .font(DeskType.body)
@@ -261,8 +225,7 @@ private struct MonitorPairing: View {
         let monitors = displays.filter(canControlSpeakers)
         let paired = model.volumeDisplayID
 
-        Section {
-            Picker(selection: Binding(
+        Picker(selection: Binding(
                 get: { model.volumeDisplayID },
                 set: { id in
                     guard model.audio.output?.uid == output.uid else { return }
@@ -283,7 +246,8 @@ private struct MonitorPairing: View {
                     Text("Saved display (unavailable)").font(DeskType.body).tag(Optional(paired)).disabled(true)
                 }
             } label: {
-                Text("Control speakers on").font(DeskType.body)
+                SettingLabel(symbol: "speaker.wave.2.fill", color: .blue, title: "Monitor speakers",
+                             detail: detail(monitors: monitors, names: names))
             }
             .font(DeskType.body)
             .controlSize(.regular)
@@ -291,32 +255,57 @@ private struct MonitorPairing: View {
             .disabled(monitors.isEmpty && paired == nil)
             .focused($pairingFocused)
             .id("monitor-pairing")
-        } header: {
-            Text("Monitor speakers").font(DeskType.device)
-        } footer: {
-            Group {
-                if monitors.isEmpty {
-                    Text(model.display.isRefreshing ? "Looking for speaker controls…" : "No connected monitor provides the speaker controls this output needs.")
-                } else if let monitor = monitors.first(where: { $0.id == model.resolvedDisplayID }) {
-                    let name = names[monitor.id] ?? monitor.name
-                    if model.audio.outputVolume == nil && monitor.volume != nil {
-                        Text("Volume controls adjust the speakers on \(name).")
-                    } else {
-                        Text("Mute controls the speakers on \(name).")
-                    }
-                } else {
-                    Text("Choose the display that plays audio from \(output.name).")
-                }
-            }
-            .font(DeskType.body)
-            .foregroundStyle(.secondary)
-            .settingsFooter()
+    }
+
+    /// Says which monitor the volume and mute controls reach right now.
+    private func detail(monitors: [MonitorDisplay], names: [String: String]) -> String {
+        if monitors.isEmpty {
+            return model.display.isRefreshing ? "Looking for speaker controls…"
+                : "No connected monitor provides the speaker controls this output needs."
         }
+        guard let monitor = monitors.first(where: { $0.id == model.resolvedDisplayID }) else {
+            return "Choose the display that plays audio from \(output.name)."
+        }
+        let name = names[monitor.id] ?? monitor.name
+        return model.audio.outputVolume == nil && monitor.volume != nil
+            ? "Volume keys and the slider change \(name)." : "Mute changes \(name)."
     }
 
     private func canControlSpeakers(_ display: MonitorDisplay) -> Bool {
         (model.audio.outputVolume == nil && display.volume != nil) ||
         (model.audio.outputMuted == nil && display.muted != nil)
+    }
+}
+
+/// A coloured symbol, a title and one line that says what the setting does.
+private struct SettingLabel: View {
+    let symbol: String
+    let color: Color
+    let title: String
+    var detail: String?
+    /// Greyed out while the setting cannot take effect.
+    var dimmed = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(dimmed ? Color.gray : color))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(dimmed ? .secondary : .primary)
+                    .contentTransition(.opacity)
+                if let detail {
+                    Text(detail).foregroundStyle(.secondary)
+                }
+            }
+            .font(DeskType.body)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
     }
 }
 

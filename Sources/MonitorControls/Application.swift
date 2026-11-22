@@ -45,6 +45,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     private lazy var contextMenu = makeAppMenu()
     private var settingsWindow: NSWindow?
     private let settingsNavigation = SettingsNavigation()
+    private lazy var settingsTabs = SettingsTabs(navigation: settingsNavigation)
     private var wakeObserver: NSObjectProtocol?
     private var outsideClickMonitor: Any?
     /// When the panel last closed for a reason other than the icon's own action.
@@ -217,17 +218,17 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     private func openSettings(_ destination: SettingsDestination) {
         popover.performClose(nil)
         settingsNavigation.open(destination)
+        settingsTabs.sync()
         if settingsWindow == nil {
             let initialSize = NSSize(width: 900, height: 540)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: initialSize),
-                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
-            window.title = "Monitor Controls Settings"
-            window.toolbarStyle = .unified
+            window.toolbar = settingsTabs.toolbar
+            settingsTabs.window = window
+            window.toolbarStyle = .preference
             window.isReleasedWhenClosed = false
             let host = NSHostingController(rootView: SettingsView(model: model, navigation: settingsNavigation))
-            // Let the split view put the section name and its toolbar in the title bar.
-            host.sceneBridgingOptions = [.title, .toolbars]
             // Let the window own its dimensions. Switching to a long device list
             // should scroll its content without resizing the user's window.
             host.sizingOptions = []

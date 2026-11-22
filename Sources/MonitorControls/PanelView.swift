@@ -30,8 +30,9 @@ struct PanelView: View {
                 .keyboardShortcut(",", modifiers: .command)
             }
 
-            // Without an external display there is nothing to adjust, so the section is left out.
-            if !model.display.displays.isEmpty {
+            // Without an external display there is nothing to adjust, so the section
+            // is left out once the search for displays has ended.
+            if !model.display.displays.isEmpty || model.display.isRefreshing {
                 DisplaySection(controller: model.display)
                 Divider().padding(.leading, PanelMetrics.textInset)
             }
@@ -81,7 +82,20 @@ private struct DisplaySection: View {
     var body: some View {
         let displays = controller.displays
         Group {
-            if displays.count > 2 {
+            if displays.isEmpty {
+                HStack(spacing: PanelMetrics.columnSpacing) {
+                    MonitorGlyph(brightness: nil)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Brightness")
+                            .font(DeskType.body.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("Looking for displays…")
+                            .font(DeskType.body)
+                    }
+                    Spacer(minLength: 0)
+                }
+            } else if displays.count > 2 {
                 ScrollView {
                     displayRows(displays)
                 }

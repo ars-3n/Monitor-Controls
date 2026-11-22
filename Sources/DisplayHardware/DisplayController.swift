@@ -79,27 +79,22 @@ public final class DisplayController {
     @ObservationIgnored private var writes: [ControlKey: DisplayWrite] = [:]
     @ObservationIgnored private var writeOrder: [ControlKey] = []
     @ObservationIgnored private var pump: Task<Void, Never>?
-    @ObservationIgnored private var brightnessChecks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var checks: [ControlKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var settle: Task<Void, Never>?
-    @ObservationIgnored private let staleAfter: Duration
-    @ObservationIgnored private var synced: ContinuousClock.Instant?
-    @ObservationIgnored private var waiting: [@MainActor () -> Void] = []
 
     public init() {
         worker = DisplayWorker()
         observesSystemEvents = true
         screens = ScreenDescription.collect
         recoveryDelays = [.milliseconds(700), .seconds(2)]
-        staleAfter = .seconds(10)
     }
 
-    init(worker: any DisplayIO, recoveryDelays: [Duration] = [], staleAfter: Duration = .seconds(10),
+    init(worker: any DisplayIO, recoveryDelays: [Duration] = [],
          screens: @escaping @MainActor () -> [ScreenDescription]) {
         self.worker = worker
         observesSystemEvents = false
         self.screens = screens
         self.recoveryDelays = recoveryDelays
-        self.staleAfter = staleAfter
     }
 
     isolated deinit { stop() }
@@ -173,12 +168,11 @@ public final class DisplayController {
         recovery?.cancel()
         recovery = nil
         recoveryAttempts = 0
-        for check in brightnessChecks.values { check.cancel() }
-        brightnessChecks.removeAll()
+        for check in checks.values { check.cancel() }
+        checks.removeAll()
         writes.removeAll()
         writeOrder.removeAll()
-        waiting.removeAll()
-        synced = nil
+        worker.fence.setWriteWaiting(false)
         scanPending = false
         readPending = false
         for display in displays where !display.canRememberPairing { knownFeatures.removeValue(forKey: display.id) }
@@ -237,6 +231,8 @@ public final class DisplayController {
         worker.fence.resetAudio()
         writes = writes.filter { !$0.key.feature.isAudio }
         writeOrder.removeAll { $0.feature.isAudio }
+        for key in checks.keys where key.feature.isAudio { checks.removeValue(forKey: key)?.cancel() }
+        worker.fence.setWriteWaiting(!writeOrder.isEmpty)
         // Immediately remove optimistic levels for the old route. A later
         // read verifies whether a transfer already on the wire did take effect.
         for i in displays.indices {
@@ -282,23 +278,6 @@ public final class DisplayController {
         }
     }
 
-    /// Runs `change` against levels read from the monitor recently. The
-    /// monitor's own buttons, or another computer on a second input, may have
-    /// moved them since the last read, so an old reading is refreshed first.
-    public func withCurrentLevels(_ change: @escaping @MainActor () -> Void) {
-        guard isRunning, !sleeping, !isRefreshing, !displays.isEmpty,
-              synced.map({ $0.duration(to: .now) >= staleAfter }) ?? true else { return change() }
-        waiting.append(change)
-        readPending = true
-        schedule()
-    }
-
-    private func resumeWaiting() {
-        let changes = waiting
-        waiting.removeAll()
-        for change in changes { change() }
-    }
-
     public func dismissError() {
         failedKey = nil
         lastError = nil
@@ -320,23 +299,24 @@ public final class DisplayController {
               displays[index].value(feature) != nil else { return }
         let bounded = min(1, max(0, value))
         let key = ControlKey(id: id, feature: feature)
-        if feature == .brightness { brightnessChecks.removeValue(forKey: id)?.cancel() }
+        checks.removeValue(forKey: key)?.cancel()
         if writes[key] == nil { writeOrder.append(key) }
         writes[key] = DisplayWrite(key: key, fraction: bounded, routeIsCurrent: routeIsCurrent)
         displays[index].apply(bounded, to: feature)
-        synced = .now
+        worker.fence.setWriteWaiting(true)
         schedule()
     }
 
-    private func scheduleBrightnessCheck(_ request: DisplayWrite, session: Session) {
+    /// Reads a level back once the slider or the key has been still for a moment.
+    private func scheduleCheck(_ request: DisplayWrite, session: Session) {
         let key = request.key
-        brightnessChecks[key.id] = Task { [weak self] in
+        checks[key] = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             guard !Task.isCancelled, let self else { return }
-            self.brightnessChecks[key.id] = nil
-            guard self.worker.fence.accepts(session) else { return }
+            self.checks[key] = nil
+            guard self.worker.fence.accepts(session, audio: key.feature.isAudio) else { return }
             var check = request
-            check.verifyBrightnessOnly = true
+            check.verifyOnly = true
             self.writes[key] = check
             self.writeOrder.append(key)
             self.schedule()
@@ -349,11 +329,7 @@ public final class DisplayController {
     }
 
     private func drain() async {
-        // A read that never ran must not strand the changes waiting for it.
-        defer {
-            pump = nil
-            resumeWaiting()
-        }
+        defer { pump = nil }
         while isRunning && !sleeping {
             let session = worker.fence.snapshot()
             if scanPending {
@@ -364,20 +340,19 @@ public final class DisplayController {
                     confirmed = Dictionary(uniqueKeysWithValues: result.map { ($0.id, $0) })
                     displays = result
                     isRefreshing = false
-                    synced = .now
                     didRead(result)
-                    resumeWaiting()
                 }
             } else if let key = writeOrder.first {
                 writeOrder.removeFirst()
+                if writeOrder.isEmpty { worker.fence.setWriteWaiting(false) }
                 guard let request = writes.removeValue(forKey: key),
                       let visibleSession, worker.fence.accepts(visibleSession) else { continue }
                 let result = await worker.write(request, session: session)
                 guard worker.fence.accepts(session, audio: key.feature.isAudio),
                       let index = displays.firstIndex(where: { $0.id == key.id }) else { continue }
                 switch result {
-                case .sentBrightness:
-                    if writes[key] == nil { scheduleBrightnessCheck(request, session: session) }
+                case .sent:
+                    if writes[key] == nil { scheduleCheck(request, session: session) }
                 case let .confirmed(value):
                     confirmed[key.id]?.apply(value, to: key.feature)
                     if writes[key] == nil { displays[index].apply(value, to: key.feature) }
@@ -396,7 +371,7 @@ public final class DisplayController {
                     }
                     readPending = true
                 }
-            } else if readPending && brightnessChecks.isEmpty {
+            } else if readPending && checks.isEmpty {
                 readPending = false
                 let result: [MonitorDisplay]
                 let current = screens()
@@ -408,8 +383,12 @@ public final class DisplayController {
                 }
                 if needsDiscovery {
                     result = await worker.scan(current, session: session)
+                } else if let read = await worker.refresh(ids: displays.map(\.id), session: session) {
+                    result = read
                 } else {
-                    result = await worker.refresh(ids: displays.map(\.id), session: session)
+                    // A change arrived during the read. Send it, then read again.
+                    readPending = true
+                    continue
                 }
                 guard worker.fence.accepts(session) else { continue }
                 confirmed = Dictionary(uniqueKeysWithValues: result.map { ($0.id, $0) })
@@ -419,9 +398,7 @@ public final class DisplayController {
                     for (key, request) in writes where key.id == display.id { updated.apply(request.fraction, to: key.feature) }
                     return updated
                 }
-                synced = .now
                 didRead(result)
-                resumeWaiting()
             } else {
                 return
             }
@@ -432,7 +409,7 @@ public final class DisplayController {
         while true {
             if let settle { await settle.value }
             else if let pump { await pump.value }
-            else if let check = brightnessChecks.values.first { await check.value }
+            else if let check = checks.values.first { await check.value }
             else if let recovery { await recovery.value }
             else { return }
         }

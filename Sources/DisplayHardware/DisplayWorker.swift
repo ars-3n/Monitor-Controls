@@ -13,10 +13,15 @@ struct Session: Equatable, Sendable {
 final class SessionFence: @unchecked Sendable {
     private let lock = NSLock()
     private var current = Session()
+    private var writeWaiting = false
 
     func snapshot() -> Session { lock.withLock { current } }
     func resetDisplays() { lock.withLock { current.topology &+= 1 } }
     func resetAudio() { lock.withLock { current.audioRoute &+= 1 } }
+    /// A level read can wait, and a change the user just made cannot. A read
+    /// that is under way stops at its next request and is started again later.
+    func setWriteWaiting(_ waiting: Bool) { lock.withLock { writeWaiting = waiting } }
+    var isWriteWaiting: Bool { lock.withLock { writeWaiting } }
     func accepts(_ session: Session, audio: Bool = false) -> Bool {
         lock.withLock { current.topology == session.topology && (!audio || current.audioRoute == session.audioRoute) }
     }
@@ -32,7 +37,8 @@ struct DisplayWrite: Sendable {
     let fraction: Double
     let routeIsCurrent: (@Sendable () -> Bool)?
 
-    var verifyBrightnessOnly = false
+    /// Reads the level back without sending it again.
+    var verifyOnly = false
 
     func isCurrent(fence: SessionFence, session: Session) -> Bool {
         guard fence.accepts(session, audio: key.feature.isAudio) else { return false }
@@ -43,7 +49,7 @@ struct DisplayWrite: Sendable {
 }
 
 enum WriteResult: Sendable {
-    case sentBrightness
+    case sent
     case confirmed(Double)
     case unconfirmed(Double?)
     case obsolete
@@ -56,7 +62,8 @@ protocol DisplayIO: Sendable {
     var fence: SessionFence { get }
     func releaseConnections()
     func scan(_ screens: [ScreenDescription], session: Session) async -> [MonitorDisplay]
-    func refresh(ids: [String], session: Session) async -> [MonitorDisplay]
+    /// Nil when a waiting write cut the read short.
+    func refresh(ids: [String], session: Session) async -> [MonitorDisplay]?
     func write(_ request: DisplayWrite, session: Session) async -> WriteResult
 }
 
@@ -88,12 +95,12 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             guard fence.accepts(session) else { return [] }
             let ordered = discover(screens)
             endpoints = Dictionary(uniqueKeysWithValues: ordered.map { ($0.display.id, $0) })
-            return readValues(ids: ordered.map(\.display.id), session: session)
+            return readValues(ids: ordered.map(\.display.id), session: session) ?? []
         }
     }
 
-    func refresh(ids: [String], session: Session) async -> [MonitorDisplay] {
-        await perform { [self] in readValues(ids: ids, session: session) }
+    func refresh(ids: [String], session: Session) async -> [MonitorDisplay]? {
+        await perform { [self] in readValues(ids: ids, session: session, yieldsToWrites: true) }
     }
 
     private func read(_ feature: Feature, on endpoint: Endpoint, allowed: () -> Bool) -> DDCValue? {
@@ -119,18 +126,23 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
         return nil
     }
 
-    private func readValues(ids: [String], session: Session) -> [MonitorDisplay] {
-        ids.compactMap { id in
-            guard fence.accepts(session), var endpoint = endpoints[id] else { return nil }
+    private func readValues(ids: [String], session: Session, yieldsToWrites: Bool = false) -> [MonitorDisplay]? {
+        let interrupted = { yieldsToWrites && self.fence.isWriteWaiting }
+        var displays: [MonitorDisplay] = []
+        for id in ids {
+            guard fence.accepts(session), var endpoint = endpoints[id] else { continue }
             var display = endpoint.display
             for feature in Feature.allCases {
-                let value = read(feature, on: endpoint) { self.fence.accepts(session) }
+                let value = read(feature, on: endpoint) { self.fence.accepts(session) && !interrupted() }
+                // A read that was cut short says nothing about the control.
+                if interrupted() { return nil }
                 endpoint.readings[feature] = value
                 display.apply(value.map { feature == .mute ? ($0.current == 1 ? 1 : 0) : $0.fraction }, to: feature)
             }
             endpoints[id] = endpoint
-            return display
+            displays.append(display)
         }
+        return displays
     }
 
     func write(_ request: DisplayWrite, session: Session) async -> WriteResult {
@@ -149,9 +161,8 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             // MonitorControl spaces and repeats Set VCP just as it does Get
             // VCP. The LG can acknowledge a lone transfer without applying it.
             let native = key.feature == .brightness && endpoint.appleBrightness
-            let verifyingBrightness = key.feature == .brightness && request.verifyBrightnessOnly
-            var sent = verifyingBrightness
-            if !verifyingBrightness {
+            var sent = request.verifyOnly
+            if !request.verifyOnly {
                 if native {
                     sent = MCSetNativeBrightness(endpoint.display.screenID, Float(fraction))
                 } else if let channel = endpoint.channel {
@@ -161,10 +172,9 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
                         if channel.write(key.feature, value: target) { sent = true }
                     }
                 }
-                // During a drag, leave the bus free for the next position.
-                // The controller verifies the final target after input settles.
-                if sent && key.feature == .brightness { return .sentBrightness }
-                usleep(40000)
+                // During a drag or a held key, leave the bus free for the next
+                // level. The controller verifies the last one after input settles.
+                if sent { return .sent }
             }
             var observed = read(key.feature, on: endpoint, allowed: allowed)
             // A panel can keep reporting the previous value for a moment

@@ -144,7 +144,17 @@ private actor TestDisplayIO: DisplayIO {
         }
         return [display] + additionalDisplays
     }
-    func refresh(ids: [String], session: Session) -> [MonitorDisplay] { [display] + additionalDisplays }
+    var refreshCount = 0
+    var interruptedReads = 0
+    func interruptNextRead() { interruptedReads = 1 }
+    func refresh(ids: [String], session: Session) -> [MonitorDisplay]? {
+        refreshCount += 1
+        if interruptedReads > 0 {
+            interruptedReads -= 1
+            return nil
+        }
+        return [display] + additionalDisplays
+    }
     func write(_ request: DisplayWrite, session: Session) -> WriteResult {
         guard request.isCurrent(fence: fence, session: session) else { return .obsolete }
         sent.append(request.key)
@@ -172,34 +182,18 @@ private actor TestDisplayIO: DisplayIO {
     #expect(controller.displays.first?.muted == false)
 }
 
-@MainActor @Test func aStepStartsFromTheLevelTheMonitorHasNow() async {
-    let worker = TestDisplayIO()
-    let controller = DisplayController(worker: worker, staleAfter: .zero) { [deskScreen] }
-    controller.start()
-    defer { controller.stop() }
-    await controller.waitUntilIdle()
-    #expect(controller.displays.first?.brightness == 0.25)
-    await worker.changeOnTheMonitor(brightness: 0.5)
-    for _ in 1...2 {
-        controller.withCurrentLevels {
-            controller.setBrightness((controller.displays.first?.brightness ?? 0) + 0.1, for: "lg")
-        }
-    }
-    #expect(await worker.sent.isEmpty)
-    await controller.waitUntilIdle()
-    #expect(abs((controller.displays.first?.brightness ?? 0) - 0.7) < 0.001)
-    #expect(abs((await worker.display.brightness ?? 0) - 0.7) < 0.001)
-}
-
-@MainActor @Test func aRecentReadingIsUsedWithoutAnotherRead() async {
+@MainActor @Test func aReadCutShortByAChangeIsRepeatedAndKeepsTheDisplays() async {
     let worker = TestDisplayIO()
     let controller = DisplayController(worker: worker) { [deskScreen] }
     controller.start()
     defer { controller.stop() }
     await controller.waitUntilIdle()
-    var ran = false
-    controller.withCurrentLevels { ran = true }
-    #expect(ran)
+    await worker.changeOnTheMonitor(brightness: 0.5)
+    await worker.interruptNextRead()
+    controller.refreshValues()
+    await controller.waitUntilIdle()
+    #expect(await worker.refreshCount == 2)
+    #expect(controller.displays.first?.brightness == 0.5)
 }
 
 private let deskScreen = ScreenDescription(screenID: 42, name: "LG", vendor: 1, product: 123, serial: 567,
@@ -416,7 +410,7 @@ private final class LaggingChannel: DDCChannel, Sendable {
 
     func read(_ feature: Feature) -> [UInt8]? {
         let current: UInt8 = state.withLock {
-            guard feature == .brightness else { return feature == .mute ? 2 : 25 }
+            guard feature != .mute else { return 2 }
             if $0.staleReads > 0 { $0.staleReads -= 1 } else { $0.reported = $0.accepted }
             return $0.reported
         }
@@ -441,15 +435,31 @@ private final class LaggingChannel: DDCChannel, Sendable {
     }, isOnline: { _ in true })
     let session = worker.fence.snapshot()
     _ = await worker.scan([deskScreen], session: session)
-    var request = DisplayWrite(key: ControlKey(id: "lg", feature: .brightness), fraction: 0.6, routeIsCurrent: nil)
-    guard case .sentBrightness = await worker.write(request, session: session) else {
-        Issue.record("Brightness write was not sent"); return
+    // Brightness and volume are both sent first and read back afterwards.
+    for feature in [Feature.brightness, .volume] {
+        var request = DisplayWrite(key: ControlKey(id: "lg", feature: feature), fraction: 0.6, routeIsCurrent: nil)
+        guard case .sent = await worker.write(request, session: session) else {
+            Issue.record("The write was not sent"); return
+        }
+        request.verifyOnly = true
+        guard case let .confirmed(value) = await worker.write(request, session: session) else {
+            Issue.record("A panel that applied the change two reads late was reported as failed"); return
+        }
+        #expect(value == 0.6)
     }
-    request.verifyBrightnessOnly = true
-    guard case let .confirmed(value) = await worker.write(request, session: session) else {
-        Issue.record("A panel that applied the change two reads late was reported as failed"); return
-    }
-    #expect(value == 0.6)
+}
+
+@Test func aLevelReadGivesWayToAWaitingChange() async {
+    let worker = DisplayWorker(discover: { _ in
+        let display = MonitorDisplay(id: "lg", screenID: 42, name: "LG", brightness: nil, volume: nil, muted: nil)
+        return [Endpoint(display: display, channel: DroppingChannel(), allowsLGQuirk: false, appleBrightness: false)]
+    }, isOnline: { _ in true })
+    let session = worker.fence.snapshot()
+    _ = await worker.scan([deskScreen], session: session)
+    worker.fence.setWriteWaiting(true)
+    #expect(await worker.refresh(ids: ["lg"], session: session) == nil)
+    worker.fence.setWriteWaiting(false)
+    #expect(await worker.refresh(ids: ["lg"], session: session)?.first?.brightness == 0.4)
 }
 
 /// Drops the first two brightness requests, as a panel can while it wakes.

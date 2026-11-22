@@ -192,13 +192,9 @@ final class DeskModel {
     /// The brightness indicator appears under this view, the menu-bar icon.
     func anchorIndicator(to view: NSView) { overlay.anchor = view }
 
+    /// Steps from the level last read or set, so the key takes effect at once.
+    /// The levels are read when a monitor connects, on wake and when the panel opens.
     private func adjust(_ key: DeskKey, id: String, fine: Bool) {
-        // The step starts from the monitor's level, which its own buttons or
-        // another computer may have changed since the last read.
-        display.withCurrentLevels { [weak self] in self?.step(key, id: id, fine: fine) }
-    }
-
-    private func step(_ key: DeskKey, id: String, fine: Bool) {
         guard let screen = display.displays.first(where: { $0.id == id }) else { return }
         let step = fine ? 1.0 / 64 : 1.0 / 16
         switch key {

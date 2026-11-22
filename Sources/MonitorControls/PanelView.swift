@@ -228,7 +228,7 @@ private struct AudioChannel: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                RouteList(audio: audio, input: input)
+                RouteList(model: model, input: input)
                     .padding(.top, 2)
             }
         }
@@ -260,8 +260,9 @@ private struct AudioChannel: View {
 
 /// Keep inventory observation separate so dragging a fader doesn't rebuild an open device menu.
 private struct RouteList: View {
-    let audio: AudioController
+    let model: DeskModel
     let input: Bool
+    private var audio: AudioController { model.audio }
 
     /// Devices listed in the panel. The rest are behind "Show all".
     private static let listed = 3
@@ -281,12 +282,19 @@ private struct RouteList: View {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(available.filter { listed.contains($0.id) }) { device in
                     let idle = input ? nil : audio.idleSpeakers.flatMap { $0.uid == device.uid ? $0 : nil }
+                    // The output in use shows its mute on its own row too, like the idle speakers.
+                    let inUse = input || device.id != active?.id ? nil : model.outputMuted
                     RouteRow(name: names[device.id] ?? device.name, symbol: routeSymbol(for: device),
                              selected: device.id == active?.id, input: input,
                              mute: idle.map { speakers in
                                  RouteRow.Mute(muted: speakers.muted) {
                                      guard audio.idleSpeakers?.uid == speakers.uid else { return }
                                      audio.setIdleSpeakersMuted(!speakers.muted)
+                                 }
+                             } ?? inUse.map { muted in
+                                 RouteRow.Mute(muted: muted) {
+                                     guard audio.output?.uid == device.uid, model.outputMuted == muted else { return }
+                                     model.setOutputMuted(!muted)
                                  }
                              }) {
                         select(device.id, among: available)
@@ -336,7 +344,7 @@ private struct RouteRow: View {
     var mute: Mute?
     let choose: () -> Void
 
-    /// A mute for a device that is not in use. Only the Mac's speakers have one.
+    /// The mute of the output in use, or of the Mac's speakers while they are idle.
     struct Mute {
         let muted: Bool
         let toggle: () -> Void

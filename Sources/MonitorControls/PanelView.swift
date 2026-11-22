@@ -30,8 +30,11 @@ struct PanelView: View {
                 .keyboardShortcut(",", modifiers: .command)
             }
 
-            DisplaySection(controller: model.display)
-            Divider().padding(.leading, PanelMetrics.textInset)
+            // Without an external display there is nothing to adjust, so the section is left out.
+            if !model.display.displays.isEmpty {
+                DisplaySection(controller: model.display)
+                Divider().padding(.leading, PanelMetrics.textInset)
+            }
             AudioChannel(model: model, input: false, openSettings: openSettings)
             Divider().padding(.leading, PanelMetrics.textInset)
             AudioChannel(model: model, input: true, openSettings: openSettings)
@@ -78,21 +81,7 @@ private struct DisplaySection: View {
     var body: some View {
         let displays = controller.displays
         Group {
-            if displays.isEmpty {
-                HStack(spacing: PanelMetrics.columnSpacing) {
-                    MonitorGlyph(brightness: nil)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Brightness")
-                            .font(DeskType.body.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .accessibilityAddTraits(.isHeader)
-                        Text(controller.isRefreshing ? "Looking for displays…" : "Connect an external display to adjust its brightness.")
-                            .font(DeskType.body)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                }
-            } else if displays.count > 2 {
+            if displays.count > 2 {
                 ScrollView {
                     displayRows(displays)
                 }

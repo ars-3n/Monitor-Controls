@@ -32,6 +32,9 @@ struct Endpoint: Equatable, Sendable {
     /// Part of the Mac and always present: its own speakers or microphone.
     var isInternal = false
     var followsPort: Bool? = false
+    /// The USB vendor and product of a device without a serial number. Two
+    /// models can share a name, and this tells them apart on any port.
+    var model: String?
 }
 
 struct RememberedRoute: Codable, Equatable {
@@ -44,6 +47,14 @@ struct RememberedRoute: Codable, Equatable {
     var followsPort: Bool?
     var hidden: Bool?
     var hiddenRevision = 0
+    var model: String?
+    /// Set when another model was already remembered under the same UID.
+    var key: String?
+    /// Higher for the port a device of this kind was last used on.
+    var seen = 0
+
+    /// What the saved order lists this record as.
+    var orderKey: String { key ?? uid }
 
     init(_ endpoint: Endpoint) {
         uid = endpoint.uid
@@ -53,6 +64,7 @@ struct RememberedRoute: Codable, Equatable {
         isVirtual = endpoint.isVirtual
         isInternal = endpoint.isInternal
         followsPort = endpoint.followsPort
+        model = endpoint.model
     }
 }
 
@@ -77,35 +89,121 @@ struct RoutePreferences: Codable, Equatable {
         if role == .input { inputOrder = order } else { outputOrder = order }
     }
 
+    /// The record for a connected device. One saved before models were read
+    /// belongs to the first model that turns up under its UID.
+    private func index(for endpoint: Endpoint) -> Int? {
+        let candidates = records.indices.filter { records[$0].role == endpoint.role && records[$0].uid == endpoint.uid }
+        if let exact = candidates.first(where: { records[$0].model == endpoint.model }) { return exact }
+        return endpoint.model == nil ? candidates.first : candidates.first { records[$0].model == nil }
+    }
+
     mutating func remember(_ endpoints: [Endpoint]) {
-        var portsByFamily: [String: Set<String>] = [:]
+        var portsByFamily: [String: [String?: Set<String>]] = [:]
+        var present: [Int] = []
+        var added: Set<Int> = []
         for endpoint in endpoints {
             var followsPort = endpoint.followsPort
-            if let i = records.firstIndex(where: { $0.role == endpoint.role && $0.uid == endpoint.uid }) {
+            if let i = index(for: endpoint) {
                 records[i].name = endpoint.name
                 records[i].isDisplay = endpoint.isDisplay
                 records[i].isVirtual = endpoint.isVirtual
                 records[i].isInternal = endpoint.isInternal
                 if let confirmed = followsPort { records[i].followsPort = confirmed }
+                if let model = endpoint.model { records[i].model = model }
                 followsPort = records[i].followsPort
+                present.append(i)
             } else {
-                records.append(RememberedRoute(endpoint))
+                var record = RememberedRoute(endpoint)
+                if let model = endpoint.model, records.contains(where: { $0.role == endpoint.role && $0.uid == endpoint.uid }) {
+                    record.key = endpoint.uid + "#" + model
+                }
+                records.append(record)
+                present.append(records.count - 1)
+                added.insert(records.count - 1)
             }
             if followsPort == true, let port = PortIdentity(endpoint.uid) {
-                portsByFamily[port.family, default: []].insert(port.port)
+                portsByFamily[port.family, default: [:]][endpoint.model, default: []].insert(port.port)
             }
         }
-        for (family, ports) in portsByFamily where ports.count > 1 {
-            ambiguousFamilies.insert(family)
+        for (family, ports) in portsByFamily {
+            // Without a model for each of them, the name is all there is to compare.
+            if ports[nil] != nil {
+                if ports.values.reduce(into: Set<String>(), { $0.formUnion($1) }).count > 1 { ambiguousFamilies.insert(family) }
+                continue
+            }
+            for (model, ports) in ports where ports.count > 1 {
+                ambiguousFamilies.insert(family)
+                if let model { ambiguousFamilies.insert(family + "#" + model) }
+            }
+        }
+        let models = knownModels
+        for i in present {
+            guard let mine = kin(records[i], models) else { continue }
+            let twins = records.indices.filter { other in
+                other != i && records[other].role == records[i].role && kin(records[other], models).map { $0 == mine } == true
+            }
+            let away = twins.filter { !present.contains($0) }
+            if added.contains(i), ambiguousFamilies.contains(mine.family) { place(i, beside: twins, away: away) }
+            // Keep the port in use ahead of the ones its twins were left on.
+            if let rival = away.map({ records[$0].seen }).max(), rival >= records[i].seen {
+                records[i].seen = max(rival, twins.map { records[$0].seen }.max() ?? 0) + 1
+            }
         }
     }
 
-    private func identifier(_ record: RememberedRoute) -> String {
-        let role = record.role.rawValue
-        if record.followsPort == true, let port = PortIdentity(record.uid), !ambiguousFamilies.contains(port.family) {
-            return "\(role):port:\(port.family):\(port.endpoint)"
+    /// Identical devices are told apart by port, so one on a port it has never
+    /// used cannot be recognised. It is most likely the twin that is away and
+    /// was used last, and takes that one's place and visibility.
+    private mutating func place(_ i: Int, beside twins: [Int], away: [Int]) {
+        let role = records[i].role
+        var order = order(for: role)
+        guard !order.contains(records[i].orderKey) else { return }
+        let likely = away.max { (records[$0].seen, $0) < (records[$1].seen, $1) }
+        if let likely {
+            records[i].hidden = records[likely].hidden
+            records[i].hiddenRevision = records[likely].hiddenRevision
         }
-        return "\(role):uid:\(record.uid)"
+        if let likely, let at = order.firstIndex(of: records[likely].orderKey) {
+            order.insert(records[i].orderKey, at: at)
+        } else if let last = twins.filter({ !away.contains($0) }).compactMap({ order.firstIndex(of: records[$0].orderKey) }).max() {
+            order.insert(records[i].orderKey, at: last + 1)
+        } else {
+            return
+        }
+        setOrder(order, for: role)
+    }
+
+    /// The models seen under each family name.
+    private var knownModels: [String: Set<String>] {
+        var models: [String: Set<String>] = [:]
+        for record in records where record.followsPort == true {
+            guard let model = record.model, let port = PortIdentity(record.uid) else { continue }
+            models[port.family, default: []].insert(model)
+        }
+        return models
+    }
+
+    /// The devices a record cannot be told apart from by anything but its port.
+    /// The model only counts once a second one has shown up under the name.
+    private func kin(_ record: RememberedRoute, _ models: [String: Set<String>]) -> (family: String, endpoint: String)? {
+        guard record.followsPort == true, let port = PortIdentity(record.uid) else { return nil }
+        if let model = record.model, models[port.family, default: []].count > 1 {
+            return (port.family + "#" + model, port.endpoint)
+        }
+        return (port.family, port.endpoint)
+    }
+
+    private func identifier(_ record: RememberedRoute, _ models: [String: Set<String>]) -> String {
+        let role = record.role.rawValue
+        if let kin = kin(record, models), !ambiguousFamilies.contains(kin.family) {
+            return "\(role):port:\(kin.family):\(kin.endpoint)"
+        }
+        return "\(role):uid:\(record.orderKey)"
+    }
+
+    private func groups(_ role: RouteRole) -> [String: [Int]] {
+        let models = knownModels
+        return Dictionary(grouping: records.indices.filter { records[$0].role == role }) { identifier(records[$0], models) }
     }
 
     /// The devices in priority order. This is the order Settings shows and
@@ -114,16 +212,17 @@ struct RoutePreferences: Codable, Equatable {
         // Coalesce ports only while the evidence supports it. Keep original
         // per-port settings intact so discovering two identical devices can
         // immediately restore each one's own visibility and priority.
-        let groups = Dictionary(grouping: records.filter { $0.role == role }, by: identifier)
+        let groups = groups(role)
         let ranks = Dictionary(order(for: role).enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
-        let connected = Set(endpoints.filter { $0.role == role }.map(\.uid))
-        let rows = groups.map { id, group in
-            let current = group.first { connected.contains($0.uid) }
+        let connected = Set(endpoints.filter { $0.role == role }.compactMap { index(for: $0) })
+        let rows = groups.map { id, indices in
+            let group = indices.map { records[$0] }
+            let current = indices.first { connected.contains($0) }.map { records[$0] }
             let record = current ?? group.last!
             let visibility = group.filter { $0.hidden != nil }.max { $0.hiddenRevision < $1.hiddenRevision }
             return (device: RouteDevice(id: id, uid: record.uid, name: record.name, role: role, isDisplay: record.isDisplay,
                                         isHidden: visibility?.hidden ?? false, isConnected: current != nil, isVirtual: record.isVirtual),
-                    rank: group.compactMap { ranks[$0.uid] }.min(),
+                    rank: group.compactMap { ranks[$0.orderKey] }.min(),
                     // Something the user connects, then the Mac's own, then a device an app created.
                     kind: record.isVirtual ? 2 : record.isInternal ? 1 : 0)
         }
@@ -147,7 +246,7 @@ struct RoutePreferences: Codable, Equatable {
     }
 
     mutating func setHidden(_ value: Bool, device: RouteDevice) {
-        guard let i = records.firstIndex(where: { $0.uid == device.uid && $0.role == device.role }) else { return }
+        guard let i = groups(device.role)[device.id]?.first(where: { records[$0].uid == device.uid }) else { return }
         let revision = (records.map(\.hiddenRevision).max() ?? 0) + 1
         records[i].hidden = value
         records[i].hiddenRevision = revision
@@ -156,9 +255,10 @@ struct RoutePreferences: Codable, Equatable {
     /// Drops everything saved for a device, including the other ports it was
     /// seen on. It gets a new row with default settings if it connects again.
     mutating func forget(_ device: RouteDevice) {
-        let aliases = Set(records.filter { $0.role == device.role && identifier($0) == device.id }.map(\.uid))
-        guard !aliases.isEmpty else { return }
-        records.removeAll { $0.role == device.role && aliases.contains($0.uid) }
+        let indices = Set(groups(device.role)[device.id] ?? [])
+        guard !indices.isEmpty else { return }
+        let aliases = Set(indices.map { records[$0].orderKey })
+        records = records.indices.filter { !indices.contains($0) }.map { records[$0] }
         setOrder(order(for: device.role).filter { !aliases.contains($0) }, for: device.role)
         levelsBeforeMute[device.id] = nil
         if inputHold == device.id { inputHold = nil }
@@ -178,11 +278,13 @@ struct RoutePreferences: Codable, Equatable {
         // Preserve historical raw-port ranks adjacent to the current visible
         // row rather than losing an offline device's rank during reordering.
         let existing = order(for: device.role)
-        let groups = Dictionary(grouping: records.filter { $0.role == device.role }, by: identifier)
+        let groups = groups(device.role)
         var updated: [String] = []
         for row in reordered {
-            updated.append(row.uid)
-            let aliases = Set(groups[row.id, default: []].map(\.uid)).subtracting([row.uid])
+            let group = groups[row.id, default: []].map { records[$0] }
+            let key = group.first { $0.uid == row.uid }?.orderKey ?? row.uid
+            updated.append(key)
+            let aliases = Set(group.map(\.orderKey)).subtracting([key])
             updated += existing.filter { aliases.contains($0) }
         }
         updated += existing.filter { !updated.contains($0) }
@@ -206,6 +308,9 @@ extension RememberedRoute {
         followsPort = try values.decodeIfPresent(Bool.self, forKey: .followsPort)
         hidden = try values.decodeIfPresent(Bool.self, forKey: .hidden)
         hiddenRevision = try values.decodeIfPresent(Int.self, forKey: .hiddenRevision) ?? 0
+        model = try? values.decodeIfPresent(String.self, forKey: .model)
+        key = try? values.decodeIfPresent(String.self, forKey: .key)
+        seen = (try? values.decodeIfPresent(Int.self, forKey: .seen)) ?? 0
     }
 }
 

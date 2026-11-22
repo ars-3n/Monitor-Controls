@@ -53,8 +53,10 @@ enum CoreAudioProperties {
             let port = PortIdentity(uid)
             let isDisplay = transport == kAudioDeviceTransportTypeDisplayPort || transport == kAudioDeviceTransportTypeHDMI
             var followsPort: Bool? = false
+            var model: String?
             if transport == kAudioDeviceTransportTypeUSB, let location = port?.usbLocation {
                 followsPort = isSeriallessUSBDevice(uid: uid, at: location)
+                if followsPort == true { model = usbModel(at: location) }
             } else if isDisplay, port?.usbLocation == nil, port != nil {
                 followsPort = true
             }
@@ -65,7 +67,7 @@ enum CoreAudioProperties {
                                 isVirtual: transport == kAudioDeviceTransportTypeVirtual || transport == kAudioDeviceTransportTypeAggregate,
                                 // The headphone jack is built in too, but its device is there only while something is plugged in.
                                 isInternal: transport == kAudioDeviceTransportTypeBuiltIn && !uid.localizedCaseInsensitiveContains("headphone"),
-                                followsPort: followsPort)
+                                followsPort: followsPort, model: model)
             }
         }
     }
@@ -195,6 +197,17 @@ enum CoreAudioProperties {
             IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
         }
         return (property("iSerialNumber") as? Int, property("USB Serial Number") as? String)
+    }
+
+    private static func usbModel(at location: UInt32) -> String? {
+        let service = usbService(matching: "locationID", value: location)
+        guard service != IO_OBJECT_NULL else { return nil }
+        defer { IOObjectRelease(service) }
+        func property(_ key: String) -> Int? {
+            IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Int
+        }
+        guard let vendor = property("idVendor"), let product = property("idProduct") else { return nil }
+        return String(format: "%04x:%04x", vendor, product)
     }
 
     private static func transport(_ id: AudioObjectID) -> UInt32 {

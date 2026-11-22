@@ -52,12 +52,13 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     /// action arrives a moment later and must not open it again.
     private var panelClosedAt: TimeInterval?
     private var closingFromIcon = false
+    private var shownLevels = MenuBarLevels()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item = status
         if let button = status.button {
-            button.image = soundLevelsIcon()
+            button.image = menuBarIcon(shownLevels)
             button.toolTip = "Monitor Controls"
             button.setAccessibilityLabel("Monitor Controls")
             button.action = #selector(togglePanel)
@@ -86,6 +87,17 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             MainActor.assumeIsolated { self?.model.screenDidWake() }
         }
         model.start()
+        followLevels()
+    }
+
+    /// Keeps the icon's knobs on the current brightness and volume.
+    private func followLevels() {
+        let levels = withObservationTracking { model.menuBarLevels.shown } onChange: { [weak self] in
+            Task { @MainActor in self?.followLevels() }
+        }
+        guard levels != shownLevels else { return }
+        shownLevels = levels
+        item?.button?.image = menuBarIcon(levels)
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

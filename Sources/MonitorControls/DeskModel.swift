@@ -107,6 +107,12 @@ final class DeskModel {
     var volume: Double? { audio.outputVolume ?? resolvedDisplay?.volume }
     var outputMuted: Bool? { audio.outputMuted ?? resolvedDisplay?.muted }
 
+    /// The first monitor with a brightness control stands for brightness, as it does in the panel.
+    var menuBarLevels: MenuBarLevels {
+        MenuBarLevels(brightness: display.displays.lazy.compactMap(\.brightness).first,
+                      volume: volume, muted: outputMuted ?? false)
+    }
+
     private func invalidateSpeakerControls() {
         media.cancelAdjustments(audioOnly: true)
         display.cancelPendingAudioWrites()

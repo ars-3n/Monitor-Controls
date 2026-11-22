@@ -277,8 +277,15 @@ private struct RouteList: View {
             let title = input ? "Choose microphone" : "Choose audio output"
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(available.filter { listed.contains($0.id) }) { device in
+                    let idle = input ? nil : audio.idleSpeakers.flatMap { $0.uid == device.uid ? $0 : nil }
                     RouteRow(name: names[device.id] ?? device.name, symbol: routeSymbol(for: device),
-                             selected: device.id == active?.id, input: input) {
+                             selected: device.id == active?.id, input: input,
+                             mute: idle.map { speakers in
+                                 RouteRow.Mute(muted: speakers.muted) {
+                                     guard audio.idleSpeakers?.uid == speakers.uid else { return }
+                                     audio.setIdleSpeakersMuted(!speakers.muted)
+                                 }
+                             }) {
                         select(device.id, among: available)
                     }
                 }
@@ -323,21 +330,50 @@ private struct RouteRow: View {
     let symbol: String
     let selected: Bool
     let input: Bool
+    var mute: Mute?
     let choose: () -> Void
+
+    /// A mute for a device that is not in use. Only the Mac's speakers have one.
+    struct Mute {
+        let muted: Bool
+        let toggle: () -> Void
+    }
 
     @State private var hovered = false
 
     var body: some View {
-        Button(action: choose) {
-            RouteRowLabel(name: name, symbol: symbol, selected: selected)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(.primary.opacity(hovered && !selected ? 0.08 : 0)))
+        ZStack(alignment: .trailing) {
+            Button(action: choose) {
+                RouteRowLabel(name: name, symbol: symbol, selected: selected)
+                    // The name stops short of the mute button.
+                    .padding(.trailing, mute == nil ? 0 : 26)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.primary.opacity(hovered && !selected ? 0.08 : 0)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(name)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .help(selected ? name : "Use \(name) as the \(input ? "microphone" : "output")")
+
+            if let mute {
+                let action = (mute.muted ? "Unmute " : "Mute ") + name
+                Button(action: mute.toggle) {
+                    CenteredSymbol(name: mute.muted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                                   pointSize: 11, weight: .semibold, side: 22)
+                        .foregroundStyle(mute.muted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                        .background(Circle().fill(mute.muted ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary.opacity(0.1))))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, RouteRowLabel.inset)
+                // Out of the way until the pointer is on the row. A muted device keeps it in view.
+                .opacity(hovered || mute.muted ? 1 : 0)
+                .accessibilityLabel(action)
+                .accessibilityValue(mute.muted ? "Muted" : "Unmuted")
+                .help(action)
+            }
         }
-        .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .accessibilityLabel(name)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(selected ? name : "Use \(name) as the \(input ? "microphone" : "output")")
     }
 }
 
@@ -346,7 +382,7 @@ private struct RouteRow: View {
 func panelCircleSymbols() -> [CenteredSymbol] {
     let devices = ["display", "airpodsmax", "airpodspro", "airpods", "laptopcomputer", "iphone", "headphones", "mic", "hifispeaker", "ellipsis"]
     let mutes = ["mic.fill", "mic.slash.fill", "speaker.wave.2.fill", "speaker.slash.fill"]
-    return devices.map { CenteredSymbol(name: $0, pointSize: 11, weight: .semibold, side: 22) }
+    return (devices + ["speaker.wave.2.fill", "speaker.slash.fill"]).map { CenteredSymbol(name: $0, pointSize: 11, weight: .semibold, side: 22) }
         + mutes.map { CenteredSymbol(name: $0, pointSize: 16, weight: .medium, side: 28) }
 }
 

@@ -38,6 +38,7 @@ struct AudioSnapshot: Sendable {
     public private(set) var outputVolume: Double?
     public private(set) var inputMuted: Bool?
     public private(set) var outputMuted: Bool?
+    public private(set) var idleSpeakers: IdleSpeakers?
     public private(set) var lastError: String?
     public private(set) var canImportLegacyPreferences: Bool
     @ObservationIgnored public var onOutputChanged: (@MainActor () -> Void)?
@@ -214,8 +215,10 @@ struct AudioSnapshot: Sendable {
         if input != newInput { input = newInput }
         if output != newOutput { output = newOutput }
         noticeOutputChange()
+        // Sound effects stay on the output in use, whoever moved either of them.
+        if let id = update.outputID { CoreAudioProperties.matchSoundEffects(to: id) }
         let live = [newInput, newOutput].compactMap { $0 }.compactMap(endpoint)
-        listeners.watch(live)
+        listeners.watch(live + [idleSpeakersEndpoint].compactMap { $0 })
         refreshLevels()
         // Both roles are evaluated together: macOS sometimes changes both
         // defaults before either Core Audio notification is delivered.
@@ -241,6 +244,11 @@ struct AudioSnapshot: Sendable {
         snapshot?.endpoints.first { $0.uid == device.uid && $0.role == device.role }
     }
 
+    private var idleSpeakersEndpoint: Endpoint? {
+        guard let output else { return nil }
+        return snapshot?.endpoints.first { $0.role == .output && $0.isInternal && $0.uid != output.uid }
+    }
+
     /// Creating the guard only examines our snapshot. Invoke it on the
     /// hardware worker immediately before issuing a monitor speaker command.
     public func outputGuard(for device: RouteDevice) -> (@Sendable () -> Bool)? {
@@ -251,7 +259,10 @@ struct AudioSnapshot: Sendable {
     private func changeDefault(_ device: RouteDevice) -> Bool {
         guard running, let e = endpoint(device), device.isConnected, CoreAudioProperties.deviceUID(e.objectID) == e.uid,
               CoreAudioProperties.setDefault(e.objectID, role: e.role) else { return false }
-        if e.role == .output { noticeOutputChange() }
+        if e.role == .output {
+            noticeOutputChange()
+            CoreAudioProperties.matchSoundEffects(to: e.objectID)
+        }
         return true
     }
 
@@ -296,6 +307,10 @@ struct AudioSnapshot: Sendable {
         case .output:
             if outputVolume != volume { outputVolume = volume }
             if outputMuted != muted { outputMuted = muted }
+            let idle = idleSpeakersEndpoint.flatMap { e in
+                CoreAudioProperties.mute(e).map { IdleSpeakers(uid: e.uid, muted: $0) }
+            }
+            if idleSpeakers != idle { idleSpeakers = idle }
         }
     }
 
@@ -303,6 +318,16 @@ struct AudioSnapshot: Sendable {
     public func setOutputVolume(_ value: Double) { changeLevel(value, on: output) }
     public func setInputMuted(_ value: Bool) { changeMute(value, on: input) }
     public func setOutputMuted(_ value: Bool) { changeMute(value, on: output) }
+
+    public func setIdleSpeakersMuted(_ muted: Bool) {
+        guard running, let e = idleSpeakersEndpoint else { return }
+        if CoreAudioProperties.setMute(muted, for: e, idle: true) {
+            lastError = nil
+        } else {
+            lastError = "The audio device could not change its mute setting."
+        }
+        refreshLevels(for: .output)
+    }
 
     private func changeLevel(_ value: Double, on device: RouteDevice?) {
         guard running else { return }

@@ -45,7 +45,8 @@ private final class AudioObservation {
         let object = AudioObjectID(kAudioObjectSystemObject)
         let specs: [(AudioObjectPropertySelector, AudioEvent)] = [
             (kAudioHardwarePropertyDevices, .topology), (kAudioHardwarePropertyDefaultInputDevice, .defaults),
-            (kAudioHardwarePropertyDefaultOutputDevice, .defaults), (kAudioHardwarePropertyServiceRestarted, .restart)
+            (kAudioHardwarePropertyDefaultOutputDevice, .defaults), (kAudioHardwarePropertyDefaultSystemOutputDevice, .defaults),
+            (kAudioHardwarePropertyServiceRestarted, .restart)
         ]
         for (selector, event) in specs {
             let key = Subscription(object: object, selector: selector)

@@ -15,6 +15,13 @@ public struct RouteDevice: Identifiable, Hashable, Sendable {
     public let isVirtual: Bool
 }
 
+/// The Mac's own speakers while another output is in use. Sounds that ignore
+/// the output choice still play there, so they have a mute of their own.
+public struct IdleSpeakers: Equatable, Sendable {
+    public let uid: String
+    public let muted: Bool
+}
+
 struct Endpoint: Equatable, Sendable {
     var objectID: UInt32
     var uid: String

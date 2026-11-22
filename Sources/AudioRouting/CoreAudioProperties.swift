@@ -34,6 +34,16 @@ enum CoreAudioProperties {
         return write(system, selector: selector, value: &id) == noErr
     }
 
+    /// macOS plays alerts and other sound effects on a device of their own.
+    /// It moves that device with the output only for a change made in System Settings.
+    static func matchSoundEffects(to output: AudioObjectID) {
+        var id = AudioObjectID(0)
+        let selector = kAudioHardwarePropertyDefaultSystemOutputDevice
+        guard read(system, selector: selector, into: &id) == noErr, id != output else { return }
+        id = output
+        _ = write(system, selector: selector, value: &id)
+    }
+
 
     static func inventory() -> [Endpoint]? {
         deviceIDs()?.flatMap { id -> [Endpoint] in
@@ -89,9 +99,10 @@ enum CoreAudioProperties {
         return read(endpoint.objectID, selector: kAudioDevicePropertyMute, scope: scope, element: element, into: &value) == noErr ? value != 0 : nil
     }
 
-    static func setMute(_ muted: Bool, for endpoint: Endpoint) -> Bool {
+    /// `idle` mutes a device that is not the default one, such as the Mac's speakers behind a monitor.
+    static func setMute(_ muted: Bool, for endpoint: Endpoint, idle: Bool = false) -> Bool {
         let scope = endpoint.role.scope
-        guard isCurrent(endpoint), let element = wholeDeviceMuteElement(endpoint.objectID, scope: scope) else { return false }
+        guard idle ? deviceUID(endpoint.objectID) == endpoint.uid : isCurrent(endpoint), let element = wholeDeviceMuteElement(endpoint.objectID, scope: scope) else { return false }
         var value: UInt32 = muted ? 1 : 0
         return write(endpoint.objectID, selector: kAudioDevicePropertyMute, scope: scope, element: element, value: &value) == noErr
     }

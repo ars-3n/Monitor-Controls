@@ -24,6 +24,7 @@ final class DeskModel {
     private(set) var loginMessage: String?
     private(set) var loginApprovalPending = false
     private var running = false
+    @ObservationIgnored private var accessWatch: Task<Void, Never>?
 
     init(audio: AudioController = AudioController(), display: DisplayController = DisplayController(),
          defaults: UserDefaults = .standard) {
@@ -52,6 +53,8 @@ final class DeskModel {
 
     func stop() {
         running = false
+        accessWatch?.cancel()
+        accessWatch = nil
         media.stop()
         audio.onOutputChanged = nil
         display.onTopologyChanged = nil
@@ -175,7 +178,11 @@ final class DeskModel {
             }
             guard let id = DisplayPlacement.atPointer(NSEvent.mouseLocation, screens: placements ?? []) else { return .system }
             let monitor = display.displays.first { $0.screenID == id && $0.brightness != nil }
-            return .brightness(external: CGDisplayIsBuiltin(id) == 0, controllableID: monitor?.id)
+            let external = CGDisplayIsBuiltin(id) == 0
+            // The key is not passed on, so say why nothing changed. While the
+            // displays are still being read there is nothing to say yet.
+            if external, monitor == nil, !display.isRefreshing { overlay.showUnavailable(onScreen: id) }
+            return .brightness(external: external, controllableID: monitor?.id)
         case .mute, .volumeUp, .volumeDown:
             let isMute = key == .mute
             guard (isMute ? audio.outputMuted == nil : audio.outputVolume == nil),
@@ -207,7 +214,8 @@ final class DeskModel {
             guard let current = screen.volume else { return }
             // Like macOS, raising the volume also ends a mute. A monitor
             // keeps its own mute through a volume change sent over DDC.
-            if key == .volumeUp, screen.muted == true { setSpeakerMuted(false, on: screen) }
+            // The mute in effect can be the output's own and not the monitor's.
+            if key == .volumeUp, outputMuted == true { setOutputMuted(false) }
             // No overlay here: monitors show their own for volume and mute.
             setSpeakerVolume(min(1, max(0, current + (key == .volumeUp ? step : -step))), on: screen)
         case .mute:
@@ -236,6 +244,29 @@ final class DeskModel {
         } else {
             media.stop()
             keyboardMessage = nil
+        }
+        watchAccess(running && keysEnabled && !keysAuthorized)
+    }
+
+    /// Access is granted in System Settings, which tells the app nothing.
+    /// Look again every second while the keys are waiting for it.
+    private func watchAccess(_ waiting: Bool) {
+        guard waiting else {
+            accessWatch?.cancel()
+            accessWatch = nil
+            return
+        }
+        guard accessWatch == nil else { return }
+        accessWatch = Task { [weak self] in
+            while true {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard let self, !Task.isCancelled else { return }
+                if AXIsProcessTrusted() {
+                    self.accessWatch = nil
+                    self.refreshKeyboardService()
+                    return
+                }
+            }
         }
     }
 

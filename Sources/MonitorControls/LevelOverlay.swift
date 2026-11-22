@@ -8,8 +8,8 @@ import SwiftUI
 final class LevelOverlay {
     @MainActor @Observable
     final class Content {
-        /// From 0 to 1.
-        var brightness = 0.0
+        /// From 0 to 1. Nil when the display has no brightness control.
+        var brightness: Double? = 0.0
     }
 
     private static let size = NSSize(width: 252, height: 52)
@@ -22,7 +22,10 @@ final class LevelOverlay {
     private var panel: NSPanel?
     private var hiding: Task<Void, Never>?
 
-    func show(brightness: Double, onScreen screenID: CGDirectDisplayID) {
+    /// Says that the display under the pointer has no brightness control.
+    func showUnavailable(onScreen screenID: CGDirectDisplayID) { show(brightness: nil, onScreen: screenID) }
+
+    func show(brightness: Double?, onScreen screenID: CGDirectDisplayID) {
         guard let screen = NSScreen.screens.first(where: {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == screenID
         }) else { return }
@@ -92,14 +95,22 @@ private struct LevelOverlayView: View {
             Image(systemName: "sun.max.fill")
                 .font(.system(size: 16, weight: .medium))
                 .frame(width: 26)
-            GeometryReader { bar in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.primary.opacity(0.18))
-                    Capsule().fill(.primary)
-                        .frame(width: max(0, bar.size.width * level))
+                .foregroundStyle(level == nil ? .secondary : .primary)
+            if let level {
+                GeometryReader { bar in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.primary.opacity(0.18))
+                        Capsule().fill(.primary)
+                            .frame(width: max(0, bar.size.width * level))
+                    }
                 }
+                .frame(height: 6)
+            } else {
+                Text("No brightness control")
+                    .font(DeskType.body)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 6)
         }
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

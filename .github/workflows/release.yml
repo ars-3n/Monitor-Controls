@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          # The release notes list the commits of the push.
+          fetch-depth: 0
       - name: Test
         run: swift test
       - name: Import signing certificate
@@ -56,12 +58,19 @@ jobs:
       - name: Publish ZIP
         env:
           GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
         run: |
           version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
           tag="v$version-${REVISION:0:12}"
           title="Monitor Controls $version (${REVISION:0:7})"
           notes="$RUNNER_TEMP/release-notes.md"
-          git log -1 --format='%s%n' > "$notes"
+          # What the push changed, without the commit that only raises the version.
+          # A forced push has no usable start, so fall back to the last commit.
+          if ! changes=$(git log --reverse --format=%s --invert-grep --grep='^Bump the version to ' "$BEFORE..$REVISION" 2>/dev/null) || [[ -z "$changes" ]]; then
+            changes=$(git log -1 --format=%s)
+          fi
+          if [[ $(wc -l <<< "$changes") -gt 1 ]]; then changes=$(sed 's/^/- /' <<< "$changes"); fi
+          printf '%s\n\n' "$changes" > "$notes"
           echo 'Download MonitorControls.zip, unzip it, and move Monitor Controls.app to Applications. Requires a Mac with Apple silicon and macOS 14 or later. This build has no Developer ID signature or notarization.' >> "$notes"
 
           # Keep partially uploaded releases in draft so a rerun can finish them.

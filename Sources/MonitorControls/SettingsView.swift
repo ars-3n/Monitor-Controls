@@ -62,22 +62,24 @@ private struct GeneralSettings: View {
                 Section {
                     let waiting = model.keysEnabled && !model.keysAuthorized
                     if waiting {
-                        LabeledContent {
+                        SettingRow(label: SettingLabel(
+                            symbol: "exclamationmark.triangle.fill", color: .yellow,
+                            title: "Keyboard access needed",
+                            detail: "Allow Monitor Controls in Accessibility settings to use these keys.")) {
                             Button(action: model.requestKeyAccess) { Text("Allow Access…").font(DeskType.control) }
                                 .controlSize(.regular)
-                        } label: {
-                            SettingLabel(symbol: "exclamationmark.triangle.fill", color: .yellow,
-                                         title: "Keyboard access needed",
-                                         detail: "Allow Monitor Controls in Accessibility settings to use these keys.")
                         }
                     }
-                    Toggle(isOn: Binding(get: { model.keysEnabled }, set: { model.setKeysEnabled($0) })) {
-                        SettingLabel(symbol: "keyboard", color: .orange,
-                                     title: "Brightness and volume keys",
-                                     detail: "Brightness keys change the display under the pointer.",
-                                     dimmed: waiting)
+                    SettingRow(label: SettingLabel(
+                        symbol: "keyboard", color: .orange,
+                        title: "Brightness and volume keys",
+                        detail: "Brightness keys change the display under the pointer.",
+                        dimmed: waiting)) {
+                        Toggle("Brightness and volume keys",
+                               isOn: Binding(get: { model.keysEnabled }, set: { model.setKeysEnabled($0) }))
+                            .toggleStyle(.switch)
+                            .controlSize(.regular)
                     }
-                    .controlSize(.regular)
                     if let message = model.keyboardMessage {
                         feedback(message)
                     }
@@ -94,10 +96,12 @@ private struct GeneralSettings: View {
                 }
 
                 Section {
-                    Toggle(isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) })) {
-                        SettingLabel(symbol: "power", color: .green, title: "Open at login")
+                    SettingRow(label: SettingLabel(symbol: "power", color: .green, title: "Open at login")) {
+                        Toggle("Open at login",
+                               isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) }))
+                            .toggleStyle(.switch)
+                            .controlSize(.regular)
                     }
-                    .controlSize(.regular)
                     if model.loginApprovalPending {
                         settingsAction("Allow Monitor Controls to open at login in System Settings.",
                                        button: "Open Login Items…", action: model.openLoginSettings)
@@ -148,7 +152,9 @@ private struct GeneralSettings: View {
             } else {
                 // One row for every other state, so only its text changes.
                 let row = updateRow(updates)
-                LabeledContent {
+                SettingRow(label: SettingLabel(
+                    symbol: "arrow.triangle.2.circlepath", color: .gray, title: row.text,
+                    detail: "Checks GitHub only when you press the button.")) {
                     HStack(spacing: 12) {
                         // Always laid out, so the row keeps its shape while work is under way.
                         ProgressView()
@@ -159,9 +165,6 @@ private struct GeneralSettings: View {
                             .controlSize(.regular)
                             .disabled(updates.isBusy)
                     }
-                } label: {
-                    SettingLabel(symbol: "arrow.triangle.2.circlepath", color: .gray, title: row.text,
-                                 detail: "Checks GitHub only when you press the button.")
                 }
             }
         }
@@ -225,7 +228,10 @@ private struct MonitorPairing: View {
         let monitors = displays.filter(canControlSpeakers)
         let paired = model.volumeDisplayID
 
-        Picker(selection: Binding(
+        SettingRow(label: SettingLabel(
+            symbol: "speaker.wave.2.fill", color: .blue, title: "Monitor speakers",
+            detail: detail(monitors: monitors, names: names))) {
+            Picker("Monitor speakers", selection: Binding(
                 get: { model.volumeDisplayID },
                 set: { id in
                     guard model.audio.output?.uid == output.uid else { return }
@@ -245,16 +251,14 @@ private struct MonitorPairing: View {
                 if let paired, !monitors.contains(where: { $0.id == paired }) {
                     Text("Saved display (unavailable)").font(DeskType.body).tag(Optional(paired)).disabled(true)
                 }
-            } label: {
-                SettingLabel(symbol: "speaker.wave.2.fill", color: .blue, title: "Monitor speakers",
-                             detail: detail(monitors: monitors, names: names))
             }
             .font(DeskType.body)
             .controlSize(.regular)
             .id(output.uid)
             .disabled(monitors.isEmpty && paired == nil)
             .focused($pairingFocused)
-            .id("monitor-pairing")
+        }
+        .id("monitor-pairing")
     }
 
     /// Says which monitor the volume and mute controls reach right now.
@@ -274,6 +278,24 @@ private struct MonitorPairing: View {
     private func canControlSpeakers(_ display: MonitorDisplay) -> Bool {
         (model.audio.outputVolume == nil && display.volume != nil) ||
         (model.audio.outputMuted == nil && display.muted != nil)
+    }
+}
+
+/// A setting's label with its control at the trailing edge, centred against
+/// the whole label. A form lines a control up with the label's first line,
+/// which leaves it high on a row that has a description.
+private struct SettingRow<Control: View>: View {
+    let label: SettingLabel
+    @ViewBuilder let control: Control
+
+    var body: some View {
+        HStack(spacing: 12) {
+            label
+            Spacer(minLength: 0)
+            control
+                .labelsHidden()
+                .fixedSize()
+        }
     }
 }
 

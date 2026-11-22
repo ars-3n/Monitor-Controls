@@ -53,6 +53,9 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     /// action arrives a moment later and must not open it again.
     private var panelClosedAt: TimeInterval?
     private var closingFromIcon = false
+    /// Where the panel's top left corner belongs while it is open.
+    private var panelCorner: NSPoint?
+    private var arrowHidden = false
     private var shownLevels = MenuBarLevels()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -71,6 +74,13 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         popover.behavior = .transient
         popover.animates = false
         popover.delegate = self
+        // The system's own menu-bar panels have no arrow. NSPopover has no
+        // public switch for it. Use the private one only while it exists,
+        // so a macOS without it shows the arrow again and nothing breaks.
+        if popover.responds(to: NSSelectorFromString("setShouldHideAnchor:")) {
+            popover.setValue(true, forKey: "shouldHideAnchor")
+            arrowHidden = true
+        }
         let menu = NSMenu()
         let root = NSMenuItem()
         root.submenu = makeAppMenu()
@@ -79,9 +89,23 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         let fileItem = menu.addItem(withTitle: "File", action: nil, keyEquivalent: "")
         fileItem.submenu = fileMenu
+        // Copy for the messages that can be selected. Nothing here is typed in.
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = editMenu
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Window", action: nil, keyEquivalent: "").submenu = windowMenu
         NSApp.mainMenu = menu
+        NSApp.windowsMenu = windowMenu
         NotificationCenter.default.addObserver(self, selector: #selector(windowResignedKey(_:)),
                                                name: NSWindow.didResignKeyNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(windowResized(_:)),
+                                               name: NSWindow.didResizeNotification, object: nil)
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -109,6 +133,7 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     func popoverDidClose(_ notification: Notification) {
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
         outsideClickMonitor = nil
+        panelCorner = nil
         panelClosedAt = closingFromIcon ? nil : ProcessInfo.processInfo.systemUptime
         closingFromIcon = false
         model.closedPanel()
@@ -176,13 +201,45 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             let buttonFrame = barWindow.convertToScreen(button.convert(button.bounds, to: nil))
             let barBottom = screen == barWindow.screen
                 ? min(screen.visibleFrame.maxY, buttonFrame.minY) : screen.visibleFrame.maxY
-            let top = barBottom - 2
-            if panel.frame.maxY > top {
-                panel.setFrameTopLeftPoint(NSPoint(x: panel.frame.minX, y: top))
+            // Without the arrow the panel sits a little under the bar, like
+            // the system's. Its window is larger than the panel it draws.
+            var top = barBottom - 2
+            var left = panel.frame.minX
+            if arrowHidden, let content = popover.contentViewController?.view {
+                let drawn = panel.convertToScreen(content.convert(content.bounds, to: nil))
+                top = barBottom - 6 + (panel.frame.maxY - drawn.maxY)
+                if screen == barWindow.screen {
+                    // The panel ends at the icon's trailing edge and extends
+                    // toward the middle of the bar. It moves over only to
+                    // stay on the screen.
+                    let margin = 8.0, area = screen.visibleFrame
+                    let drawnLeft = max(area.minX + margin,
+                                        min(buttonFrame.maxX - drawn.width, area.maxX - margin - drawn.width))
+                    left = drawnLeft - (drawn.minX - panel.frame.minX)
+                }
+            }
+            // On the bar's own screen the tip belongs right under it. The
+            // system can also leave the panel too low: it places the panel
+            // for one height, and the content then settles at another.
+            if screen == barWindow.screen ? abs(panel.frame.maxY - top) > 0.5 : panel.frame.maxY > top {
+                panel.setFrameTopLeftPoint(NSPoint(x: left, y: top))
+            } else if abs(panel.frame.minX - left) > 0.5 {
+                panel.setFrameTopLeftPoint(NSPoint(x: left, y: panel.frame.maxY))
             }
         }
+        panelCorner = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
         panel.makeKey()
         watchOutsideClicks()
+    }
+
+    /// The panel changes height when a section comes or goes, such as the
+    /// displays row once the search for displays ends. If its window keeps
+    /// its bottom edge then, or centres itself again, put its corner back.
+    @objc private func windowResized(_ notification: Notification) {
+        guard popover.isShown, let panelCorner, let window = notification.object as? NSWindow,
+              window === popover.contentViewController?.view.window,
+              abs(window.frame.maxY - panelCorner.y) > 0.5 || abs(window.frame.minX - panelCorner.x) > 0.5 else { return }
+        window.setFrameTopLeftPoint(panelCorner)
     }
 
     /// Once a device menu has been open in the panel, the popover stays up

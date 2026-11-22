@@ -39,6 +39,8 @@ struct DisplayWrite: Sendable {
 
     /// Reads the level back without sending it again.
     var verifyOnly = false
+    /// Set once the level has been sent a second time after a failed check.
+    var resent = false
 
     func isCurrent(fence: SessionFence, session: Session) -> Bool {
         guard fence.accepts(session, audio: key.feature.isAudio) else { return false }

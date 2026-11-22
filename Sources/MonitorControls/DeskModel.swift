@@ -205,6 +205,9 @@ final class DeskModel {
             overlay.show(brightness: value, onScreen: screen.screenID)
         case .volumeUp, .volumeDown:
             guard let current = screen.volume else { return }
+            // Like macOS, raising the volume also ends a mute. A monitor
+            // keeps its own mute through a volume change sent over DDC.
+            if key == .volumeUp, screen.muted == true { setSpeakerMuted(false, on: screen) }
             // No overlay here: monitors show their own for volume and mute.
             setSpeakerVolume(min(1, max(0, current + (key == .volumeUp ? step : -step))), on: screen)
         case .mute:

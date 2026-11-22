@@ -360,6 +360,18 @@ public final class DisplayController {
                 case let .unconfirmed(value):
                     if let value { confirmed[key.id]?.apply(value, to: key.feature) }
                     guard writes[key] == nil else { continue }
+                    if value != nil, !request.resent {
+                        // The monitor answered with the old level, so it dropped
+                        // the change. A panel that is waking up does this. Send it
+                        // once more before reporting a failure.
+                        var again = request
+                        again.verifyOnly = false
+                        again.resent = true
+                        writes[key] = again
+                        writeOrder.append(key)
+                        worker.fence.setWriteWaiting(true)
+                        continue
+                    }
                     displays[index].apply(value, to: key.feature)
                     failedKey = key
                     lastError = "Couldn’t confirm the change on " + displays[index].name + "."

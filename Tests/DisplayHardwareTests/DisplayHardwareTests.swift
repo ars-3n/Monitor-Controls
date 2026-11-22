@@ -146,6 +146,7 @@ private actor TestDisplayIO: DisplayIO {
     }
     var refreshCount = 0
     var interruptedReads = 0
+    private var droppedWrites = 0
     func interruptNextRead() { interruptedReads = 1 }
     func refresh(ids: [String], session: Session) -> [MonitorDisplay]? {
         refreshCount += 1
@@ -155,9 +156,18 @@ private actor TestDisplayIO: DisplayIO {
         }
         return [display] + additionalDisplays
     }
+    func dropWrites(_ count: Int) { droppedWrites = count }
     func write(_ request: DisplayWrite, session: Session) -> WriteResult {
         guard request.isCurrent(fence: fence, session: session) else { return .obsolete }
+        if request.verifyOnly {
+            let value = display.value(request.key.feature)
+            return value == request.fraction ? .confirmed(request.fraction) : .unconfirmed(value)
+        }
         sent.append(request.key)
+        if droppedWrites > 0 {
+            droppedWrites -= 1
+            return .sent
+        }
         display.apply(request.fraction, to: request.key.feature)
         return .confirmed(request.fraction)
     }
@@ -368,6 +378,31 @@ private final class SimulatedChannel: DDCChannel, Sendable {
     let result = await worker.write(request, session: session)
     guard case .obsolete = result else { Issue.record("Stale audio route produced a write result"); return }
     #expect(channel.state.withLock { $0.writes } == [.volume])
+}
+
+@MainActor @Test func anUnmuteTheMonitorDroppedIsSentOnceMore() async {
+    let worker = TestDisplayIO()
+    let controller = DisplayController(worker: worker) { [deskScreen] }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    controller.setMuted(true, for: "lg")
+    await controller.waitUntilIdle()
+
+    await worker.dropWrites(1)
+    controller.setMuted(false, for: "lg")
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.muted == false)
+    #expect(controller.lastError == nil)
+    #expect(await worker.sent.filter { $0.feature == .mute }.count == 3)
+
+    // A monitor that keeps refusing is reported, with the state it is really in.
+    await worker.dropWrites(2)
+    controller.setMuted(true, for: "lg")
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.muted == false)
+    #expect(controller.lastError != nil)
+    #expect(await worker.sent.filter { $0.feature == .mute }.count == 5)
 }
 
 @MainActor @Test func expiredLiveRouteRestoresSpeakerValueWithoutAnError() async {

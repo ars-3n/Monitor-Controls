@@ -215,7 +215,10 @@ final class DeskModel {
             // Like macOS, raising the volume also ends a mute. A monitor
             // keeps its own mute through a volume change sent over DDC.
             // The mute in effect can be the output's own and not the monitor's.
-            if key == .volumeUp, outputMuted == true { setOutputMuted(false) }
+            // Where mute is volume zero, the step up is the unmute. Restoring
+            // the earlier level first would play it for a moment.
+            let stepUnmutes = audio.outputMuted == nil && screen.mutesByVolume
+            if key == .volumeUp, outputMuted == true, !stepUnmutes { setOutputMuted(false) }
             // No overlay here: monitors show their own for volume and mute.
             setSpeakerVolume(min(1, max(0, current + (key == .volumeUp ? step : -step))), on: screen)
         case .mute:

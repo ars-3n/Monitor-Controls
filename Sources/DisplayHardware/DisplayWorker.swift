@@ -69,17 +69,110 @@ protocol DisplayIO: Sendable {
     func write(_ request: DisplayWrite, session: Session) async -> WriteResult
 }
 
+/// What is known about each monitor's mute register: 0 when it holds a write,
+/// otherwise the value it keeps reporting whatever is written.
+struct MuteMemory: Sendable {
+    var load: @Sendable () -> [String: Int] = { [:] }
+    var save: @Sendable ([String: Int]) -> Void = { _ in }
+
+    static let defaults = MuteMemory(
+        load: { UserDefaults.standard.dictionary(forKey: "muteRegisters") as? [String: Int] ?? [:] },
+        save: { UserDefaults.standard.set($0, forKey: "muteRegisters") })
+}
+
 final class DisplayWorker: DisplayIO, @unchecked Sendable {
     private let queue = DispatchQueue(label: "DisplayHardware.DDC", qos: .userInitiated)
     private var endpoints: [String: Endpoint] = [:]
     let fence = SessionFence()
     private let discover: @Sendable ([ScreenDescription]) -> [Endpoint]
     private let isOnline: @Sendable (CGDirectDisplayID) -> Bool
+    private let memory: MuteMemory
+    private lazy var muteRegisters = memory.load()
+    /// The volume to return to when a monitor muted through its volume is unmuted.
+    private var restoreLevels: [String: UInt16] = [:]
 
     init(discover: @escaping @Sendable ([ScreenDescription]) -> [Endpoint] = Discovery.endpoints,
-         isOnline: @escaping @Sendable (CGDirectDisplayID) -> Bool = { CGDisplayIsOnline($0) != 0 }) {
+         isOnline: @escaping @Sendable (CGDirectDisplayID) -> Bool = { CGDisplayIsOnline($0) != 0 },
+         memory: MuteMemory = MuteMemory()) {
         self.discover = discover
         self.isOnline = isOnline
+        self.memory = memory
+    }
+
+    private func remember(mute value: Int?, for endpoint: Endpoint) {
+        let id = endpoint.display.id
+        guard muteRegisters[id] != value else { return }
+        muteRegisters[id] = value
+        // An identifier that lasts only until the displays change is not worth keeping.
+        let known = endpoints.values.filter { !$0.display.canRememberPairing }.map(\.display.id)
+        memory.save(muteRegisters.filter { !known.contains($0.key) })
+    }
+
+    /// Some monitors answer a mute read with a fixed value and ignore mute
+    /// writes (a Dell S3425DW always says "muted"). Reading alone cannot tell
+    /// that from a real mute, so ask a monitor that says it is muted to unmute,
+    /// once, and put the mute back if it did.
+    private func probeMute(_ id: String, session: Session) {
+        guard var endpoint = endpoints[id], let channel = endpoint.channel, muteRegisters[id] == nil,
+              endpoint.readings[.mute]?.current == 1, endpoint.readings[.volume] != nil else { return }
+        let allowed = { self.fence.accepts(session) }
+        func send(_ value: UInt16) {
+            for _ in 0..<2 {
+                usleep(10000)
+                guard allowed() else { return }
+                _ = channel.write(.mute, value: value)
+            }
+        }
+        send(2)
+        var observed: DDCValue?
+        for pause: useconds_t in [50000, 250000] {
+            usleep(pause)
+            observed = read(.mute, on: endpoint, allowed: allowed)
+            if observed?.current == 2 { break }
+        }
+        guard allowed(), let observed else { return }
+        if observed.current == 2 {
+            send(1)
+            remember(mute: 0, for: endpoint)
+        } else {
+            remember(mute: 1, for: endpoint)
+            endpoint.mutesByVolume = true
+            endpoints[id] = endpoint
+        }
+    }
+
+    /// Mute for a monitor whose own mute does nothing: volume zero, and the
+    /// earlier level again to unmute.
+    private func writeMuteByVolume(_ request: DisplayWrite, endpoint: Endpoint, allowed: () -> Bool) -> WriteResult {
+        var endpoint = endpoint
+        let id = request.key.id
+        let mute = request.fraction != 0
+        guard let channel = endpoint.channel, let volume = endpoint.readings[.volume] else { return .unconfirmed(nil) }
+        var observed: DDCValue? = volume
+        if !request.verifyOnly && (volume.current == 0) != mute {
+            if mute { restoreLevels[id] = volume.current }
+            let target = mute ? 0 : restoreLevels[id] ?? max(1, volume.maximum / 10)
+            for _ in 0..<2 {
+                usleep(10000)
+                guard allowed() else { return .obsolete }
+                // In case the mute is real after all and was misjudged.
+                if !mute { _ = channel.write(.mute, value: 2) }
+                _ = channel.write(.volume, value: target)
+            }
+            for pause: useconds_t in [50000, 250000] {
+                usleep(pause)
+                observed = read(.volume, on: endpoint, allowed: allowed)
+                if let observed, (observed.current == 0) == mute { break }
+            }
+        } else if request.verifyOnly {
+            observed = read(.volume, on: endpoint, allowed: allowed)
+        }
+        guard allowed() else { return .obsolete }
+        guard let observed else { return .unconfirmed(nil) }
+        endpoint.readings[.volume] = observed
+        endpoints[id] = endpoint
+        let muted = observed.current == 0
+        return muted == mute ? .confirmed(muted ? 1 : 0) : .unconfirmed(muted ? 1 : 0)
     }
 
     func releaseConnections() {
@@ -97,7 +190,10 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             guard fence.accepts(session) else { return [] }
             let ordered = discover(screens)
             endpoints = Dictionary(uniqueKeysWithValues: ordered.map { ($0.display.id, $0) })
-            return readValues(ids: ordered.map(\.display.id), session: session) ?? []
+            let ids = ordered.map(\.display.id)
+            guard readValues(ids: ids, session: session) != nil else { return [] }
+            for id in ids { probeMute(id, session: session) }
+            return ids.compactMap { endpoints[$0]?.snapshot }
         }
     }
 
@@ -133,16 +229,19 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
         var displays: [MonitorDisplay] = []
         for id in ids {
             guard fence.accepts(session), var endpoint = endpoints[id] else { continue }
-            var display = endpoint.display
             for feature in Feature.allCases {
                 let value = read(feature, on: endpoint) { self.fence.accepts(session) && !interrupted() }
                 // A read that was cut short says nothing about the control.
                 if interrupted() { return nil }
                 endpoint.readings[feature] = value
-                display.apply(value.map { feature == .mute ? ($0.current == 1 ? 1 : 0) : $0.fraction }, to: feature)
             }
+            // A register that reads a new value is not stuck. Judge it again.
+            if let stuck = muteRegisters[id], stuck != 0, let mute = endpoint.readings[.mute], Int(mute.current) != stuck {
+                remember(mute: nil, for: endpoint)
+            }
+            endpoint.mutesByVolume = (muteRegisters[id] ?? 0) != 0 && endpoint.readings[.volume] != nil
             endpoints[id] = endpoint
-            displays.append(display)
+            displays.append(endpoint.snapshot)
         }
         return displays
     }
@@ -160,6 +259,9 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             }
             let target = key.feature == .mute ? UInt16(fraction == 0 ? 2 : 1) : UInt16((fraction * Double(previous.maximum)).rounded())
             guard allowed() else { return .obsolete }
+            if key.feature == .mute && endpoint.mutesByVolume {
+                return writeMuteByVolume(request, endpoint: endpoint, allowed: allowed)
+            }
             // MonitorControl spaces and repeats Set VCP just as it does Get
             // VCP. The LG can acknowledge a lone transfer without applying it.
             let native = key.feature == .brightness && endpoint.appleBrightness
@@ -193,6 +295,19 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             let value = observed.map { key.feature == .mute ? ($0.current == 1 ? 1.0 : 0.0) : $0.fraction }
             let confirmed = native ? value.map { abs($0 - fraction) <= 0.01 } == true :
                 DDCValue.confirmed(observed, target: target, feature: key.feature, lg: endpoint.allowsLGQuirk)
+            if key.feature == .mute, let observed {
+                if sent, confirmed {
+                    remember(mute: 0, for: endpoint)
+                } else if request.resent, endpoint.readings[.volume] != nil {
+                    // Sent twice and read back unchanged: this mute does nothing.
+                    remember(mute: Int(observed.current), for: endpoint)
+                    endpoint.mutesByVolume = true
+                    endpoints[key.id] = endpoint
+                    var again = request
+                    again.verifyOnly = false
+                    return writeMuteByVolume(again, endpoint: endpoint, allowed: allowed)
+                }
+            }
             if sent, confirmed, let value { return .confirmed(value) }
             return .unconfirmed(value)
         }

@@ -4,13 +4,16 @@ import XCTest
 /// An explicit desk test. Routine test runs use fixtures and never write to hardware.
 final class LGHardwareTests: XCTestCase {
     @MainActor func testLGReadChangeAndRestore() async throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["DESK_CONTROLS_TEST_LG"] == "1")
+        // DESK_CONTROLS_TEST_DISPLAY names another monitor, for example "DELL S3425DW".
+        let environment = ProcessInfo.processInfo.environment
+        let name = environment["DESK_CONTROLS_TEST_DISPLAY"] ?? "LG ULTRAWIDE"
+        try XCTSkipUnless(environment["DESK_CONTROLS_TEST_LG"] == "1" || environment["DESK_CONTROLS_TEST_DISPLAY"] != nil)
         let controller = DisplayController()
         controller.start()
         defer { controller.stop() }
         await controller.waitUntilIdle()
-        let matches = controller.displays.filter { $0.name.caseInsensitiveCompare("LG ULTRAWIDE") == .orderedSame }
-        XCTAssertEqual(matches.count, 1, "Connect exactly one LG ULTRAWIDE for this test.")
+        let matches = controller.displays.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        XCTAssertEqual(matches.count, 1, "Connect exactly one \(name) for this test.")
         guard matches.count == 1 else { return }
         let screen = matches[0]
         let brightness = try XCTUnwrap(screen.brightness)
@@ -51,6 +54,6 @@ final class LGHardwareTests: XCTestCase {
         XCTAssertEqual(final?.muted, originalMute)
         XCTAssertEqual(final?.brightness ?? -1, brightness, accuracy: 0.001)
         XCTAssertEqual(final?.volume ?? -1, volume, accuracy: 0.001)
-        print("LG hardware check: brightness \(brightness), volume \(volume), muted \(originalMute); final \(String(describing: final?.brightness)), \(String(describing: final?.volume)), \(String(describing: final?.muted))")
+        print("\(name) hardware check: mute by volume \(screen.mutesByVolume),  brightness \(brightness), volume \(volume), muted \(originalMute); final \(String(describing: final?.brightness)), \(String(describing: final?.volume)), \(String(describing: final?.muted))")
     }
 }

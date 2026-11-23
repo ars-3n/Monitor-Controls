@@ -152,6 +152,21 @@ struct Endpoint {
     let allowsLGQuirk: Bool
     let appleBrightness: Bool
     var readings: [Feature: DDCValue] = [:]
+    var mutesByVolume = false
+
+    /// The levels as the panel shows them, from the last readings.
+    var snapshot: MonitorDisplay {
+        var display = display
+        for feature in Feature.allCases {
+            let value = readings[feature]
+            display.apply(value.map { feature == .mute ? ($0.current == 1 ? 1 : 0) : $0.fraction }, to: feature)
+        }
+        if mutesByVolume, let volume = readings[.volume] {
+            display.mutesByVolume = true
+            display.muted = volume.current == 0
+        }
+        return display
+    }
 }
 
 enum Discovery {

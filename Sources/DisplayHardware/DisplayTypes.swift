@@ -9,6 +9,8 @@ public struct MonitorDisplay: Identifiable, Equatable, Sendable {
     public internal(set) var brightness: Double?
     public internal(set) var volume: Double?
     public internal(set) var muted: Bool?
+    /// The monitor has no mute of its own that works, so silence is volume zero.
+    public internal(set) var mutesByVolume = false
 
     public init(id: String, screenID: CGDirectDisplayID, name: String,
                 canRememberPairing: Bool = true, brightness: Double?, volume: Double?, muted: Bool?) {
@@ -80,8 +82,12 @@ extension MonitorDisplay {
     mutating func apply(_ value: Double?, to feature: Feature) {
         switch feature {
         case .brightness: brightness = value
-        case .volume: volume = value
-        case .mute: muted = value.map { $0 != 0 }
+        case .volume:
+            volume = value
+            if mutesByVolume, let value { muted = value == 0 }
+        case .mute:
+            muted = value.map { $0 != 0 }
+            if mutesByVolume, value == 1 { volume = 0 }
         }
     }
 }

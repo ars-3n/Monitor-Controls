@@ -83,7 +83,7 @@ public final class DisplayController {
     @ObservationIgnored private var settle: Task<Void, Never>?
 
     public init() {
-        worker = DisplayWorker()
+        worker = DisplayWorker(memory: .defaults)
         observesSystemEvents = true
         screens = ScreenDescription.collect
         recoveryDelays = [.milliseconds(700), .seconds(2)]
@@ -357,6 +357,8 @@ public final class DisplayController {
                     confirmed[key.id]?.apply(value, to: key.feature)
                     if writes[key] == nil { displays[index].apply(value, to: key.feature) }
                     if failedKey == key { dismissError() }
+                    // Muting through the volume moves the volume as well.
+                    if key.feature == .mute { readPending = true }
                 case let .unconfirmed(value):
                     if let value { confirmed[key.id]?.apply(value, to: key.feature) }
                     guard writes[key] == nil else { continue }
@@ -375,7 +377,7 @@ public final class DisplayController {
                     displays[index].apply(value, to: key.feature)
                     failedKey = key
                     lastError = "Couldn’t confirm the change on " + displays[index].name + "."
-                    if value == nil { readPending = true }
+                    if value == nil || key.feature == .mute { readPending = true }
                 case .obsolete:
                     // Core Audio may switch outputs before delivering its notification.
                     if writes[key] == nil {

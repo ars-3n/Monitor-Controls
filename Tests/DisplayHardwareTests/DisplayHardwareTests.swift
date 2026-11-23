@@ -520,3 +520,115 @@ private final class DroppingChannel: DDCChannel, Sendable {
     #expect(displays.first?.brightness == 0.4)
     #expect(channel.brightnessRequests.withLock { $0 } == 3)
 }
+
+/// Answers like a Dell S3425DW: the volume works, and the mute register
+/// reports one fixed value whatever is written to it.
+private final class StuckMuteChannel: DDCChannel, Sendable {
+    struct State {
+        var volume: UInt16 = 45
+        var muteWrites: [UInt16] = []
+        var volumeWrites: [UInt16] = []
+    }
+    let state = OSAllocatedUnfairLock(initialState: State())
+    let reported: UInt8
+    let holds: Bool
+    init(reported: UInt8, holds: Bool = false) {
+        self.reported = reported
+        self.holds = holds
+    }
+
+    func read(_ feature: Feature) -> [UInt8]? {
+        let (volume, lastMute) = state.withLock { ($0.volume, $0.muteWrites.last) }
+        let current: UInt8 = switch feature {
+        case .brightness: 59
+        case .volume: UInt8(volume)
+        case .mute: holds ? UInt8(lastMute ?? UInt16(reported)) : reported
+        }
+        let bytes: [UInt8] = [0x6e, 0x88, 2, 0, feature.rawValue, 0, 0, feature == .mute ? 2 : 100, 0, current]
+        return bytes + [bytes.reduce(UInt8(0x50), ^)]
+    }
+
+    func write(_ feature: Feature, value: UInt16) -> Bool {
+        state.withLock {
+            if feature == .mute { $0.muteWrites.append(value) }
+            if feature == .volume {
+                $0.volume = value
+                $0.volumeWrites.append(value)
+            }
+        }
+        return true
+    }
+}
+
+private func muteWorker(_ channel: StuckMuteChannel, memory: MuteMemory = MuteMemory()) -> DisplayWorker {
+    DisplayWorker(discover: { _ in
+        let display = MonitorDisplay(id: "dell", screenID: 42, name: "DELL", brightness: nil, volume: nil, muted: nil)
+        return [Endpoint(display: display, channel: channel, allowsLGQuirk: false, appleBrightness: false)]
+    }, isOnline: { _ in true }, memory: memory)
+}
+
+@MainActor @Test func aMuteRegisterStuckOnMutedIsReplacedByVolumeZero() async {
+    let channel = StuckMuteChannel(reported: 1)
+    let saved = OSAllocatedUnfairLock(initialState: [String: Int]())
+    let memory = MuteMemory(load: { [:] }, save: { value in saved.withLock { $0 = value } })
+    let controller = DisplayController(worker: muteWorker(channel, memory: memory)) { [deskScreen] }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    // The monitor says "muted" and plays at 45.
+    #expect(controller.displays.first?.muted == false)
+    #expect(controller.displays.first?.mutesByVolume == true)
+    #expect(saved.withLock { $0 } == ["dell": 1])
+
+    controller.setMuted(true, for: "dell")
+    await controller.waitUntilIdle()
+    #expect(channel.state.withLock { $0.volume } == 0)
+    #expect(controller.displays.first?.muted == true)
+    #expect(controller.displays.first?.volume == 0)
+
+    controller.setMuted(false, for: "dell")
+    await controller.waitUntilIdle()
+    #expect(channel.state.withLock { $0.volume } == 45)
+    #expect(controller.displays.first?.muted == false)
+    #expect(controller.displays.first?.volume == 0.45)
+
+    // Raising the volume from zero is an unmute as well.
+    controller.setVolume(0, for: "dell")
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.muted == true)
+    controller.setVolume(0.2, for: "dell")
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.muted == false)
+    #expect(controller.lastError == nil)
+}
+
+@Test func aWorkingMuteIsPutBackAfterTheCheckAndNotCheckedAgain() async {
+    let channel = StuckMuteChannel(reported: 1, holds: true)
+    let saved = OSAllocatedUnfairLock(initialState: [String: Int]())
+    let memory = MuteMemory(load: { saved.withLock { $0 } }, save: { value in saved.withLock { $0 = value } })
+    let worker = muteWorker(channel, memory: memory)
+    let displays = await worker.scan([deskScreen], session: worker.fence.snapshot())
+    #expect(displays.first?.muted == true)
+    #expect(displays.first?.mutesByVolume == false)
+    #expect(channel.state.withLock { $0.muteWrites } == [2, 2, 1, 1])
+
+    let again = await muteWorker(channel, memory: memory).scan([deskScreen], session: worker.fence.snapshot())
+    #expect(again.first?.muted == true)
+    #expect(channel.state.withLock { $0.muteWrites.count } == 4)
+}
+
+@MainActor @Test func aMuteStuckOnUnmutedIsFoundOnTheFirstPress() async {
+    let channel = StuckMuteChannel(reported: 2)
+    let controller = DisplayController(worker: muteWorker(channel)) { [deskScreen] }
+    controller.start()
+    defer { controller.stop() }
+    await controller.waitUntilIdle()
+    #expect(controller.displays.first?.mutesByVolume == false)
+
+    controller.setMuted(true, for: "dell")
+    await controller.waitUntilIdle()
+    #expect(channel.state.withLock { $0.volume } == 0)
+    #expect(controller.displays.first?.muted == true)
+    #expect(controller.displays.first?.mutesByVolume == true)
+    #expect(controller.lastError == nil)
+}

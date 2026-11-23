@@ -16,18 +16,7 @@ struct PanelView: View {
                     .font(DeskType.heading)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button {
-                    openSettings(.settings)
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 20, height: 20)
-                }
-                .buttonBorderShape(.circle)
-                .deskGlassButton()
-                .accessibilityLabel("Settings…")
-                .help("Settings…")
-                .keyboardShortcut(",", modifiers: .command)
+                SettingsShortcuts(open: openSettings)
             }
 
             // Without an external display there is nothing to adjust, so the section
@@ -52,6 +41,63 @@ struct PanelView: View {
         .padding(.bottom, 18)
         .frame(width: 360)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Two halves of one capsule: the devices page and the general page of the settings window.
+private struct SettingsShortcuts: View {
+    let open: (SettingsDestination) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            half("headphones", title: "Devices…") { open(.devices) }
+            Divider().frame(height: 14)
+            half("gearshape", title: "Settings…") { open(.general) }
+                .keyboardShortcut(",", modifiers: .command)
+        }
+        .padding(.horizontal, 3)
+        .shortcutsGlass()
+    }
+
+    private func half(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 34, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(ShortcutHalfStyle())
+        .accessibilityLabel(title)
+        .help(title)
+    }
+}
+
+private struct ShortcutHalfStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Half(configuration: configuration)
+    }
+
+    private struct Half: View {
+        let configuration: Configuration
+        @State private var hovered = false
+
+        var body: some View {
+            configuration.label
+                .background(.primary.opacity(configuration.isPressed ? 0.16 : hovered ? 0.08 : 0), in: Capsule().inset(by: 3))
+                .onHover { hovered = $0 }
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func shortcutsGlass() -> some View {
+        if #available(macOS 26, *) {
+            glassEffect(.regular, in: Capsule())
+        } else {
+            background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.primary.opacity(0.12)))
+        }
     }
 }
 

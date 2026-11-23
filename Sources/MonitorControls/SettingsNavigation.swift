@@ -2,7 +2,8 @@ import AppKit
 import Observation
 
 enum SettingsDestination {
-    case settings, monitorSpeakers
+    /// `settings` opens the page last in view.
+    case settings, devices, general, monitorSpeakers
 }
 
 enum SettingsSection: CaseIterable {
@@ -15,7 +16,11 @@ final class SettingsNavigation {
     var pairingRequest = 0
 
     func open(_ destination: SettingsDestination) {
-        if destination == .monitorSpeakers {
+        switch destination {
+        case .settings: break
+        case .devices: section = .devices
+        case .general: section = .general
+        case .monitorSpeakers:
             section = .general
             pairingRequest += 1
         }

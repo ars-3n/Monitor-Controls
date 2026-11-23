@@ -282,8 +282,8 @@ private struct RouteList: View {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(available.filter { listed.contains($0.id) }) { device in
                     let idle = input ? nil : audio.idleSpeakers.flatMap { $0.uid == device.uid ? $0 : nil }
-                    // The output in use shows its mute on its own row too, like the idle speakers.
-                    let inUse = input || device.id != active?.id ? nil : model.outputMuted
+                    // The device in use shows its mute on its own row too, like the idle speakers.
+                    let inUse = device.id != active?.id ? nil : input ? audio.inputMuted : model.outputMuted
                     RouteRow(name: names[device.id] ?? device.name, symbol: routeSymbol(for: device),
                              selected: device.id == active?.id, input: input,
                              mute: idle.map { speakers in
@@ -293,8 +293,13 @@ private struct RouteList: View {
                                  }
                              } ?? inUse.map { muted in
                                  RouteRow.Mute(muted: muted) {
-                                     guard audio.output?.uid == device.uid, model.outputMuted == muted else { return }
-                                     model.setOutputMuted(!muted)
+                                     if input {
+                                         guard audio.input?.uid == device.uid, audio.inputMuted == muted else { return }
+                                         audio.setInputMuted(!muted)
+                                     } else {
+                                         guard audio.output?.uid == device.uid, model.outputMuted == muted else { return }
+                                         model.setOutputMuted(!muted)
+                                     }
                                  }
                              }) {
                         select(device.id, among: available)
@@ -344,7 +349,7 @@ private struct RouteRow: View {
     var mute: Mute?
     let choose: () -> Void
 
-    /// The mute of the output in use, or of the Mac's speakers while they are idle.
+    /// The mute of the device in use, or of the Mac's speakers while they are idle.
     struct Mute {
         let muted: Bool
         let toggle: () -> Void
@@ -369,7 +374,8 @@ private struct RouteRow: View {
             if let mute {
                 let action = (mute.muted ? "Unmute " : "Mute ") + name
                 Button(action: mute.toggle) {
-                    CenteredSymbol(name: mute.muted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                    CenteredSymbol(name: input ? (mute.muted ? "mic.slash.fill" : "mic.fill")
+                                       : (mute.muted ? "speaker.slash.fill" : "speaker.wave.2.fill"),
                                    pointSize: 11, weight: .semibold, side: 22)
                         .foregroundStyle(mute.muted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                         .background(Circle().fill(mute.muted ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary.opacity(0.1))))
@@ -393,7 +399,7 @@ private struct RouteRow: View {
 func panelCircleSymbols() -> [CenteredSymbol] {
     let devices = ["display", "airpodsmax", "airpodspro", "airpods", "laptopcomputer", "iphone", "headphones", "mic", "hifispeaker", "ellipsis"]
     let mutes = ["mic.fill", "mic.slash.fill", "speaker.wave.2.fill", "speaker.slash.fill"]
-    return (devices + ["speaker.wave.2.fill", "speaker.slash.fill"]).map { CenteredSymbol(name: $0, pointSize: 11, weight: .semibold, side: 22) }
+    return (devices + mutes).map { CenteredSymbol(name: $0, pointSize: 11, weight: .semibold, side: 22) }
         + mutes.map { CenteredSymbol(name: $0, pointSize: 16, weight: .medium, side: 28) }
 }
 

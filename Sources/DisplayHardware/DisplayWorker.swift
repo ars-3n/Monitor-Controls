@@ -152,11 +152,17 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
         if !request.verifyOnly && (volume.current == 0) != mute {
             if mute { restoreLevels[id] = volume.current }
             let target = mute ? 0 : restoreLevels[id] ?? max(1, volume.maximum / 10)
+            if !mute {
+                // In case the mute is real after all and was misjudged. A
+                // monitor drops a command that follows another at once, so
+                // leave a gap before the volume.
+                guard allowed() else { return .obsolete }
+                _ = channel.write(.mute, value: 2)
+                usleep(50000)
+            }
             for _ in 0..<2 {
                 usleep(10000)
                 guard allowed() else { return .obsolete }
-                // In case the mute is real after all and was misjudged.
-                if !mute { _ = channel.write(.mute, value: 2) }
                 _ = channel.write(.volume, value: target)
             }
             for pause: useconds_t in [50000, 250000] {

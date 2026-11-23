@@ -45,10 +45,17 @@ final class LGHardwareTests: XCTestCase {
 
         // A previously muted system should never be unmuted during this check.
         if !originalMute {
-            controller.setMuted(true, for: screen.id)
-            let muted = await read()
-            XCTAssertEqual(muted?.muted, true)
-            controller.setMuted(false, for: screen.id)
+            // More than once: an unmute that fails only some of the time is easy to miss.
+            for _ in 0..<5 {
+                controller.setMuted(true, for: screen.id)
+                let muted = await read()
+                XCTAssertEqual(muted?.muted, true)
+                controller.setMuted(false, for: screen.id)
+                let unmuted = await read()
+                XCTAssertEqual(unmuted?.muted, false)
+                XCTAssertEqual(unmuted?.volume ?? -1, volume, accuracy: 0.001)
+                XCTAssertNil(controller.lastError)
+            }
         }
         let final = await read()
         XCTAssertEqual(final?.muted, originalMute)

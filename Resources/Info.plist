@@ -8,8 +8,8 @@
     <key>CFBundleDisplayName</key><string>Monitor Controls</string>
     <key>CFBundleName</key><string>Monitor Controls</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.1.6</string>
-    <key>CFBundleVersion</key><string>38</string>
+    <key>CFBundleShortVersionString</key><string>1.1.7</string>
+    <key>CFBundleVersion</key><string>39</string>
     <key>CFBundleIconFile</key><string>MonitorControls</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>

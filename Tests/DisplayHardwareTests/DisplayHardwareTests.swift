@@ -587,6 +587,8 @@ private func muteWorker(_ channel: StuckMuteChannel, memory: MuteMemory = MuteMe
     #expect(controller.displays.first?.volume == 0)
 
     controller.setMuted(false, for: "dell")
+    // The slider is back at once, before the monitor has answered.
+    #expect(controller.displays.first?.volume == 0.45)
     await controller.waitUntilIdle()
     #expect(channel.state.withLock { $0.volume } == 45)
     #expect(controller.displays.first?.muted == false)

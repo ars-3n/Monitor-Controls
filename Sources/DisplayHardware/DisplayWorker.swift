@@ -141,6 +141,18 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
         }
     }
 
+    private func restoreLevel(_ id: String, _ volume: DDCValue) -> UInt16 {
+        restoreLevels[id] ?? max(1, volume.maximum / 10)
+    }
+
+    private func snapshot(_ endpoint: Endpoint) -> MonitorDisplay {
+        var display = endpoint.snapshot
+        if display.mutesByVolume, let volume = endpoint.readings[.volume] {
+            display.restoreVolume = Double(restoreLevel(display.id, volume)) / Double(volume.maximum)
+        }
+        return display
+    }
+
     /// Mute for a monitor whose own mute does nothing: volume zero, and the
     /// earlier level again to unmute.
     private func writeMuteByVolume(_ request: DisplayWrite, endpoint: Endpoint, allowed: () -> Bool) -> WriteResult {
@@ -151,7 +163,7 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
         var observed: DDCValue? = volume
         if !request.verifyOnly && (volume.current == 0) != mute {
             if mute { restoreLevels[id] = volume.current }
-            let target = mute ? 0 : restoreLevels[id] ?? max(1, volume.maximum / 10)
+            let target = mute ? 0 : restoreLevel(id, volume)
             if !mute {
                 // In case the mute is real after all and was misjudged. A
                 // monitor drops a command that follows another at once, so
@@ -199,7 +211,7 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             let ids = ordered.map(\.display.id)
             guard readValues(ids: ids, session: session) != nil else { return [] }
             for id in ids { probeMute(id, session: session) }
-            return ids.compactMap { endpoints[$0]?.snapshot }
+            return ids.compactMap { endpoints[$0].map(snapshot) }
         }
     }
 
@@ -247,7 +259,7 @@ final class DisplayWorker: DisplayIO, @unchecked Sendable {
             }
             endpoint.mutesByVolume = (muteRegisters[id] ?? 0) != 0 && endpoint.readings[.volume] != nil
             endpoints[id] = endpoint
-            displays.append(endpoint.snapshot)
+            displays.append(snapshot(endpoint))
         }
         return displays
     }

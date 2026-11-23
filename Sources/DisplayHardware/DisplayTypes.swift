@@ -11,6 +11,8 @@ public struct MonitorDisplay: Identifiable, Equatable, Sendable {
     public internal(set) var muted: Bool?
     /// The monitor has no mute of its own that works, so silence is volume zero.
     public internal(set) var mutesByVolume = false
+    /// The volume an unmute returns to, so the slider can move before the monitor answers.
+    var restoreVolume: Double?
 
     public init(id: String, screenID: CGDirectDisplayID, name: String,
                 canRememberPairing: Bool = true, brightness: Double?, volume: Double?, muted: Bool?) {
@@ -87,7 +89,13 @@ extension MonitorDisplay {
             if mutesByVolume, let value { muted = value == 0 }
         case .mute:
             muted = value.map { $0 != 0 }
-            if mutesByVolume, value == 1 { volume = 0 }
+            guard mutesByVolume, let level = volume else { break }
+            if value == 1 {
+                if level > 0 { restoreVolume = level }
+                volume = 0
+            } else if value == 0, level == 0, let restoreVolume {
+                volume = restoreVolume
+            }
         }
     }
 }

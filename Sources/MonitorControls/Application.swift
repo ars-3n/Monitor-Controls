@@ -294,12 +294,14 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             window.contentMinSize = NSSize(width: 820, height: 420)
             window.setContentSize(initialSize)
             // A new name, so a frame saved for the narrower window is not restored.
+            // Only the size is kept from the saved frame: the window is centred below.
             window.setFrameAutosaveName("MonitorControlsSettings")
-            if !window.setFrameUsingName("MonitorControlsSettings") ||
-                !NSScreen.screens.contains(where: { $0.visibleFrame.contains(CGPoint(x: window.frame.midX, y: window.frame.maxY - 12)) }) {
-                window.center()
-            }
             settingsWindow = window
+        }
+        // Opens in the middle of the screen every time. A window already on
+        // screen stays where it was put.
+        if settingsWindow?.isVisible == false, settingsWindow?.isMiniaturized == false {
+            settingsWindow?.center()
         }
         model.audio.refresh()
         model.refreshServices()

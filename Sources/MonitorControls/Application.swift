@@ -300,8 +300,11 @@ private final class DeskDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         }
         // Opens in the middle of the screen every time. A window already on
         // screen stays where it was put.
-        if settingsWindow?.isVisible == false, settingsWindow?.isMiniaturized == false {
-            settingsWindow?.center()
+        if let window = settingsWindow, !window.isVisible, !window.isMiniaturized,
+           let area = (window.screen ?? NSScreen.main)?.visibleFrame {
+            // center() puts a window above the middle. This matches Window > Center.
+            window.setFrameOrigin(NSPoint(x: (area.midX - window.frame.width / 2).rounded(),
+                                          y: (area.midY - window.frame.height / 2).rounded()))
         }
         model.audio.refresh()
         model.refreshServices()

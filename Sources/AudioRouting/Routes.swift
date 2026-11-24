@@ -79,6 +79,9 @@ struct RoutePreferences: Codable, Equatable {
     /// The devices that were connected when each hold was made and have stayed connected.
     var inputPassedOver: Set<String> = []
     var outputPassedOver: Set<String> = []
+    /// The microphone hold was made after picks outside the app stopped counting.
+    /// An older one may be macOS moving the microphone by itself, so it is dropped.
+    var inputHoldMadeHere = false
     // A scalar fallback must survive app restarts. Zero without a recorded
     // app-initiated mute is simply a volume level, not a reversible mute.
     var levelsBeforeMute: [String: Double] = [:]
@@ -336,6 +339,11 @@ extension RoutePreferences {
         // A hold saved without this list gives way to any higher device that is connected.
         inputPassedOver = Set((try? values.decode([SavedValue<String>].self, forKey: .inputPassedOver))?.compactMap(\.value) ?? [])
         outputPassedOver = Set((try? values.decode([SavedValue<String>].self, forKey: .outputPassedOver))?.compactMap(\.value) ?? [])
+        inputHoldMadeHere = (try? values.decode(Bool.self, forKey: .inputHoldMadeHere)) ?? false
+        if !inputHoldMadeHere {
+            inputHold = nil
+            inputPassedOver = []
+        }
         let savedLevels = (try? values.decode([String: SavedValue<Double>].self, forKey: .levelsBeforeMute)) ?? [:]
         levelsBeforeMute = savedLevels.compactMapValues { entry in
             guard let level = entry.value, (0...1).contains(level) else { return nil }
@@ -345,9 +353,14 @@ extension RoutePreferences {
 }
 
 struct RoutePolicy {
-    /// A device picked by hand, here or in macOS. It comes before the priority
-    /// list until it disconnects or a device above it in the list connects.
+    /// A device picked by hand. It comes before the priority list until it
+    /// disconnects or a device above it in the list connects.
     private(set) var heldID: String?
+    /// Whether a change of the default made outside the app is a pick by hand.
+    /// Core Audio does not say who moved the default, and macOS moves the
+    /// microphone to a headset by itself, so for microphones only a pick in
+    /// the app counts.
+    private let followsOutsidePicks: Bool
     /// The devices that were connected when the pick was made and have stayed
     /// connected. A higher device missing from this set has arrived since.
     private(set) var passedOver: Set<String>
@@ -359,7 +372,8 @@ struct RoutePolicy {
     private var awaitingInputFallback = false
     private var pendingSelection: (target: String, superseded: Set<String>, expires: TimeInterval)?
 
-    init(heldID: String? = nil, passedOver: Set<String> = []) {
+    init(heldID: String? = nil, passedOver: Set<String> = [], followsOutsidePicks: Bool = true) {
+        self.followsOutsidePicks = followsOutsidePicks
         self.heldID = heldID
         self.passedOver = heldID == nil ? [] : passedOver
     }
@@ -414,8 +428,10 @@ struct RoutePolicy {
             return nil
         }
         pendingSelection = nil
-        if !acknowledgingOwnWrite, let current, let previousUID, previousUID != current.id, present.contains(previousUID),
-           connected.contains(current.id), !settling {
+        if !followsOutsidePicks {
+            // The held device or the top of the list is put back below.
+        } else if !acknowledgingOwnWrite, let current, let previousUID, previousUID != current.id, present.contains(previousUID),
+                  connected.contains(current.id), !settling {
             hold(current.id, among: present)
         } else if !initialized, heldID != nil, let current, heldID != current.id {
             // An explicit choice made while the app wasn't running wins.

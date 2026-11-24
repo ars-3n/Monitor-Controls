@@ -41,7 +41,7 @@ The output slider follows whatever is playing sound. Monitor speakers are set ov
 
 ### Sound goes where you want it
 
-Put your outputs and microphones in order in Settings. When a device higher in the list connects, Monitor Controls switches to it, and when it disconnects, the next one takes over. A device you pick yourself stays in use until it disconnects or a higher one connects.
+Put your outputs and microphones in order in Settings. When a device higher in the list connects, Monitor Controls switches to it, and when it disconnects, the next one takes over. A device you pick yourself stays in use until it disconnects or a higher one connects. For microphones, only a pick made in Monitor Controls counts. macOS moves the microphone to a headset by itself, so a microphone chosen anywhere else goes back to the highest one in your list.
 
 <p align="center">
   <picture>

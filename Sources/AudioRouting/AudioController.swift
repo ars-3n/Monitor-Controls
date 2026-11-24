@@ -71,7 +71,7 @@ struct AudioSnapshot: Sendable {
             }
             preferences = RoutePreferences()
         }
-        policies[.input] = RoutePolicy(heldID: preferences.inputHold, passedOver: preferences.inputPassedOver)
+        policies[.input] = RoutePolicy(heldID: preferences.inputHold, passedOver: preferences.inputPassedOver, followsOutsidePicks: false)
         policies[.output] = RoutePolicy(heldID: preferences.outputHold, passedOver: preferences.outputPassedOver)
         canImportLegacyPreferences = !preferences.importedLegacy && RoutePreferences.containsLegacyChoices(
             defaults.persistentDomain(forName: "app.audioprioritybar") ?? [:])
@@ -80,7 +80,7 @@ struct AudioSnapshot: Sendable {
     public func start() {
         guard !running else { return }
         running = true
-        policies[.input] = RoutePolicy(heldID: preferences.inputHold, passedOver: preferences.inputPassedOver)
+        policies[.input] = RoutePolicy(heldID: preferences.inputHold, passedOver: preferences.inputPassedOver, followsOutsidePicks: false)
         policies[.output] = RoutePolicy(heldID: preferences.outputHold, passedOver: preferences.outputPassedOver)
         listeners.receive = { [weak self] event in self?.handle(event) }
         attachListeners()
@@ -422,6 +422,7 @@ struct AudioSnapshot: Sendable {
         preferences.outputHold = policies[.output]?.heldID
         preferences.inputPassedOver = policies[.input]?.passedOver ?? []
         preferences.outputPassedOver = policies[.output]?.passedOver ?? []
+        preferences.inputHoldMadeHere = preferences.inputHold != nil
         if preferences != previous { save() }
     }
 

@@ -94,9 +94,10 @@ private let order: Set<String> = ["usb", "builtin"]
     var preferences = RoutePreferences()
     preferences.inputHold = "builtin"
     preferences.inputPassedOver = ["usb", "builtin"]
+    preferences.inputHoldMadeHere = true
     let copy = try JSONDecoder().decode(RoutePreferences.self, from: JSONEncoder().encode(preferences))
     #expect(copy == preferences)
-    let damaged = Data(#"{"inputHold":"builtin","inputPassedOver":["usb",7],"outputPassedOver":false}"#.utf8)
+    let damaged = Data(#"{"inputHold":"builtin","inputHoldMadeHere":true,"inputPassedOver":["usb",7],"outputPassedOver":false}"#.utf8)
     let read = try JSONDecoder().decode(RoutePreferences.self, from: damaged)
     #expect(read.inputPassedOver == ["usb"])
     #expect(read.outputPassedOver.isEmpty)
@@ -129,4 +130,44 @@ private let order: Set<String> = ["usb", "builtin"]
     let returned = try #require(step(port: "1114000", current: "BuiltInMicrophoneDevice", time: 200))
     #expect(returned.id == first.id)
     #expect(returned.uid == "\(family):1114000:2")
+}
+
+@Test func aMicrophoneMovedOutsideTheAppGoesBackToTheTopOfTheList() {
+    // The headset was already connected when macOS moved the microphone to it.
+    let all = [usb, builtin, pods]
+    let ranked: Set<String> = ["usb", "builtin", "pods"]
+    var policy = RoutePolicy(followsOutsidePicks: false)
+    #expect(policy.desired(current: usb, devices: all, rankedIDs: ranked, time: 0) == usb)
+    #expect(policy.desired(current: pods, devices: all, rankedIDs: ranked, time: 100) == usb)
+    #expect(policy.heldID == nil)
+
+    // The same move of an output is still a pick by hand.
+    var output = RoutePolicy()
+    _ = output.desired(current: usb, devices: all, rankedIDs: ranked, time: 0)
+    #expect(output.desired(current: pods, devices: all, rankedIDs: ranked, time: 100) == pods)
+}
+
+@Test func aMicrophonePickedInTheAppSurvivesAMoveMadeOutsideIt() {
+    let all = [usb, builtin, pods]
+    let ranked: Set<String> = ["usb", "builtin", "pods"]
+    var policy = RoutePolicy(followsOutsidePicks: false)
+    _ = policy.desired(current: usb, devices: all, rankedIDs: ranked, time: 0)
+    policy.didSelect(builtin, manually: true, replacing: usb, time: 1)
+    #expect(policy.desired(current: builtin, devices: all, rankedIDs: ranked, time: 2) == builtin)
+    #expect(policy.desired(current: pods, devices: all, rankedIDs: ranked, time: 100) == builtin)
+    #expect(policy.heldID == builtin.id)
+}
+
+@Test func aMicrophoneChosenWhileTheAppWasClosedDoesNotReplaceTheList() {
+    var policy = RoutePolicy(followsOutsidePicks: false)
+    #expect(policy.desired(current: builtin, devices: docked, rankedIDs: order, time: 0) == usb)
+    #expect(policy.heldID == nil)
+}
+
+@Test func aMicrophoneHoldSavedBeforeOutsidePicksStoppedCountingIsDropped() throws {
+    let saved = Data(#"{"inputHold":"pods","inputPassedOver":["usb","pods"],"outputHold":"speakers"}"#.utf8)
+    let preferences = try JSONDecoder().decode(RoutePreferences.self, from: saved)
+    #expect(preferences.inputHold == nil)
+    #expect(preferences.inputPassedOver.isEmpty)
+    #expect(preferences.outputHold == "speakers")
 }

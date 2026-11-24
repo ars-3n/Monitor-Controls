@@ -193,6 +193,7 @@ private func route(_ uid: String) -> RouteDevice {
     current.setHidden(true, device: current.devices([], role: .output)[0])
     current.levelsBeforeMute["output:uid:usb-a"] = 0.4
     current.inputHold = "input:uid:mic-b"
+    current.inputHoldMadeHere = true
     let copy = try JSONDecoder().decode(RoutePreferences.self, from: JSONEncoder().encode(current))
     #expect(copy == current)
 }

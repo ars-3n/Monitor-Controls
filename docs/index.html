@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor Controls: external monitor brightness and volume on Mac</title>
+<meta name="description" content="Free Mac menu-bar app that sets external monitor brightness and speaker volume over DDC/CI, makes the brightness keys work on them and switches audio devices.">
+<link rel="canonical" href="https://ars-3n.github.io/Monitor-Controls/">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#e6f7f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c1d24" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" href="images/favicon.png">
+<link rel="apple-touch-icon" href="images/icon.png">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Monitor Controls">
+<meta property="og:title" content="Monitor Controls: external monitor brightness and volume on Mac">
+<meta property="og:description" content="Free menu-bar app for external monitors: brightness and speaker volume over DDC/CI, the brightness keys, microphone gain and automatic audio switching.">
+<meta property="og:url" content="https://ars-3n.github.io/Monitor-Controls/">
+<meta property="og:image" content="https://ars-3n.github.io/Monitor-Controls/images/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="The Monitor Controls panel open under its menu-bar icon, with brightness sliders for two monitors, the output volume and the microphone gain">
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Monitor Controls",
+      "description": "Menu-bar app for macOS that sets the brightness and speaker volume of external monitors over DDC/CI, makes the Mac's brightness and volume keys work on them, sets microphone gain and switches to the audio devices you rank highest.",
+      "url": "https://ars-3n.github.io/Monitor-Controls/",
+      "downloadUrl": "https://github.com/ars-3n/Monitor-Controls/releases/latest/download/MonitorControls.zip",
+      "applicationCategory": "UtilitiesApplication",
+      "operatingSystem": "macOS 14 or later",
+      "processorRequirements": "Apple silicon",
+      "image": "https://ars-3n.github.io/Monitor-Controls/images/icon.png",
+      "screenshot": "https://ars-3n.github.io/Monitor-Controls/images/panel-light.jpg",
+      "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@type": "Person", "name": "ars-3n", "url": "https://github.com/ars-3n" },
+      "sameAs": "https://github.com/ars-3n/Monitor-Controls"
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Why can't my Mac change the brightness of my external monitor?",
+          "acceptedAnswer": { "@type": "Answer", "text": "macOS sets the brightness only of Apple's own displays and a few made for the Mac, such as the LG UltraFine. Other monitors take brightness and volume commands over DDC/CI, and macOS doesn't send them. Monitor Controls does." }
+        },
+        {
+          "@type": "Question",
+          "name": "Which monitors work?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Monitors with DDC/CI, which most desktop monitors have. Some ship with it switched off in their own menu, and some docks and adapters don't pass it through. The panel says which controls are unavailable." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it run on Intel Macs?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. Releases are built for Apple silicon (M1 and later) and need macOS 14 or later." }
+        },
+        {
+          "@type": "Question",
+          "name": "How is it different from MonitorControl?",
+          "acceptedAnswer": { "@type": "Answer", "text": "The display code is adapted from MonitorControl. Monitor Controls puts it in one panel with the output volume, microphone gain and automatic switching between your audio devices, which MonitorControl doesn't do." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is it free?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Monitor Controls is open source under the GPL-3.0, and every release is on GitHub." }
+        }
+      ]
+    }
+  ]
+}
+</script>
+
+<style>
+:root {
+  --bg: #f4faf8;
+  --bg-tint: #e3f6f0;
+  --surface: #ffffff;
+  --text: #10232b;
+  --text-2: #4b5f66;
+  --line: rgba(16, 35, 43, .1);
+  --accent: #1d6b5c;
+  --accent-text: #ffffff;
+  --button-2: rgba(16, 35, 43, .06);
+  --shadow: 0 1px 2px rgba(16, 35, 43, .06), 0 18px 48px -12px rgba(16, 35, 43, .22);
+  --note: #fff8e6;
+  --note-line: #f0d48a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b171c;
+    --bg-tint: #0f2a2d;
+    --surface: #13242b;
+    --text: #e8f2ef;
+    --text-2: #9db1b0;
+    --line: rgba(232, 242, 239, .1);
+    --accent: #5fd3b5;
+    --accent-text: #08201b;
+    --button-2: rgba(232, 242, 239, .08);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 18px 48px -12px rgba(0, 0, 0, .6);
+    --note: #2a2414;
+    --note-line: #6b5a26;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b171c;
+  --bg-tint: #0f2a2d;
+  --surface: #13242b;
+  --text: #e8f2ef;
+  --text-2: #9db1b0;
+  --line: rgba(232, 242, 239, .1);
+  --accent: #5fd3b5;
+  --accent-text: #08201b;
+  --button-2: rgba(232, 242, 239, .08);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 18px 48px -12px rgba(0, 0, 0, .6);
+  --note: #2a2414;
+  --note-line: #6b5a26;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+img { display: block; max-width: 100%; height: auto; }
+a { color: var(--accent); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 700px) { .wrap { padding: 0 32px; } }
+
+/* Header */
+.top { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 600; }
+.brand img { width: 28px; height: 28px; }
+.top nav { display: flex; gap: 20px; font-size: 15px; }
+.top nav a { color: var(--text-2); text-decoration: none; }
+.top nav a:hover { color: var(--text); }
+@media (max-width: 560px) { .top nav .optional { display: none; } }
+
+/* Hero */
+.hero {
+  background:
+    radial-gradient(60% 80% at 85% 10%, color-mix(in srgb, #5fe0c0 28%, transparent), transparent 70%),
+    radial-gradient(50% 70% at 10% 100%, color-mix(in srgb, #a7a3f7 22%, transparent), transparent 70%),
+    var(--bg-tint);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+.hero-grid { display: grid; gap: 40px; align-items: center; padding: 32px 0 56px; }
+@media (min-width: 900px) { .hero-grid { grid-template-columns: 1.1fr 1fr; gap: 56px; padding: 56px 0 80px; } }
+.eyebrow { display: flex; align-items: center; gap: 14px; margin: 0 0 18px; font-weight: 600; color: var(--text-2); }
+.eyebrow img { width: 56px; height: 56px; }
+h1 {
+  margin: 0 0 18px;
+  font-size: clamp(34px, 5.6vw, 54px);
+  line-height: 1.07;
+  letter-spacing: -0.025em;
+  font-weight: 700;
+}
+.lead { margin: 0 0 28px; font-size: clamp(18px, 2.2vw, 21px); color: var(--text-2); max-width: 34em; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.button {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 22px; border-radius: 999px;
+  font-weight: 600; font-size: 17px; text-decoration: none;
+}
+.button.primary { background: var(--accent); color: var(--accent-text); }
+.button.primary:hover { filter: brightness(1.08); }
+.button.secondary { background: var(--button-2); color: var(--text); }
+.button.secondary:hover { background: color-mix(in srgb, var(--button-2), var(--text) 6%); }
+.button svg { width: 18px; height: 18px; flex: none; }
+.meta { margin: 0; font-size: 14px; color: var(--text-2); }
+.shot { justify-self: center; width: min(100%, 440px); }
+.shot img { border-radius: 28px; box-shadow: var(--shadow); }
+
+/* Sections */
+section { padding: 72px 0; }
+section + section { border-top: 1px solid var(--line); }
+h2 { margin: 0 0 12px; font-size: clamp(28px, 3.6vw, 38px); line-height: 1.15; letter-spacing: -0.02em; }
+h3 { margin: 0 0 8px; font-size: 20px; line-height: 1.3; letter-spacing: -0.01em; }
+.intro { margin: 0 0 40px; max-width: 40em; color: var(--text-2); font-size: 19px; }
+p { margin: 0 0 1em; }
+p:last-child { margin-bottom: 0; }
+
+.feature { display: grid; gap: 28px; align-items: center; margin-bottom: 64px; }
+.feature:last-child { margin-bottom: 0; }
+@media (min-width: 900px) { .feature { grid-template-columns: 1fr 1.5fr; gap: 48px; } }
+.feature .text p { color: var(--text-2); }
+.feature figure { margin: 0; }
+.feature figure img { border-radius: 18px; box-shadow: var(--shadow); }
+
+.cards { display: grid; gap: 16px; }
+@media (min-width: 700px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1000px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
+.card p { color: var(--text-2); font-size: 16px; }
+
+/* Install */
+.steps { counter-reset: step; list-style: none; padding: 0; margin: 0 0 28px; display: grid; gap: 14px; }
+.steps li { counter-increment: step; display: flex; gap: 16px; align-items: baseline; }
+.steps li::before {
+  content: counter(step); flex: none;
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--button-2); font-weight: 600; font-size: 15px;
+}
+.note { background: var(--note); border: 1px solid var(--note-line); border-radius: 14px; padding: 16px 20px; font-size: 16px; max-width: 46em; }
+kbd, code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; }
+
+/* FAQ */
+.faq { max-width: 46em; }
+.faq details { border-bottom: 1px solid var(--line); }
+.faq summary {
+  cursor: pointer; list-style: none; padding: 18px 32px 18px 0; position: relative;
+  font-weight: 600; font-size: 18px;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after {
+  content: ""; position: absolute; right: 6px; top: 50%;
+  width: 9px; height: 9px; margin-top: -7px;
+  border-right: 2px solid var(--text-2); border-bottom: 2px solid var(--text-2);
+  transform: rotate(45deg); transition: transform .2s;
+}
+.faq details[open] summary::after { transform: rotate(-135deg); margin-top: -2px; }
+.faq details p { color: var(--text-2); padding: 0 32px 20px 0; margin: 0; }
+summary:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+footer { border-top: 1px solid var(--line); padding: 32px 0 48px; font-size: 14px; color: var(--text-2); }
+footer p { max-width: 52em; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="top">
+      <a class="brand" href="./"><img src="images/favicon.png" alt="" width="28" height="28">Monitor Controls</a>
+      <nav>
+        <a class="optional" href="#features">Features</a>
+        <a class="optional" href="#install">Install</a>
+        <a class="optional" href="#faq">FAQ</a>
+        <a href="https://github.com/ars-3n/Monitor-Controls">GitHub</a>
+      </nav>
+    </div>
+
+    <div class="hero-grid">
+      <div>
+        <p class="eyebrow"><img src="images/icon.png" alt="Monitor Controls app icon" width="56" height="56">Monitor Controls for Mac</p>
+        <h1>Brightness and volume for your external monitors, in the menu bar</h1>
+        <p class="lead">macOS can't set the brightness or the speaker volume of most external monitors. Monitor Controls can. It talks to the display over DDC/CI, the control link that runs through the display cable, and keeps sound and the microphone on the devices you rank highest.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/ars-3n/Monitor-Controls/releases/latest/download/MonitorControls.zip">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10M5.5 8.5 10 13l4.5-4.5M4 17h12"/></svg>
+            Download for Mac
+          </a>
+          <a class="button secondary" href="https://github.com/ars-3n/Monitor-Controls">Source on GitHub</a>
+        </div>
+        <p class="meta">Free and open source · macOS 14 or later · Apple silicon</p>
+      </div>
+      <picture class="shot">
+        <source media="(prefers-color-scheme: dark)" srcset="images/panel-dark.jpg">
+        <img src="images/panel-light.jpg" width="960" height="1240" alt="The Monitor Controls panel under its menu-bar icon: brightness sliders for an LG ULTRAWIDE and a DELL U2723QE, the output volume with LG ULTRAWIDE, AirPods Pro and MacBook Air Speakers, and the microphone gain with a Shure MV7 selected">
+      </picture>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section id="features">
+    <div class="wrap">
+      <h2>Everything for the desk in one panel</h2>
+      <p class="intro">The menu-bar icon is a small monitor with two sliders, and its knobs sit at the current brightness and volume. Click it for the panel.</p>
+
+      <div class="feature">
+        <div class="text">
+          <h3>The brightness keys work on your monitor</h3>
+          <p>Turn on <strong>Brightness and volume keys</strong> in Settings and the keys on your Mac's keyboard control external monitors too. Brightness keys change the display under the pointer, and a small indicator under the menu-bar icon shows the new level. Volume and mute follow the active output.</p>
+        </div>
+        <figure>
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="images/keys-dark.jpg">
+            <img src="images/keys-light.jpg" width="1800" height="680" loading="lazy" alt="The brightness indicator under the Monitor Controls menu-bar icon after a press of the F2 brightness key">
+          </picture>
+        </figure>
+      </div>
+
+      <div class="feature">
+        <div class="text">
+          <h3>Sound goes where you want it</h3>
+          <p>Put your outputs and microphones in order in Settings. When a device higher in the list connects, Monitor Controls switches to it, and when it disconnects, the next one takes over. A device you pick yourself stays in use until it disconnects or a higher one connects.</p>
+          <p>The eye button hides a device you never want, such as the virtual one a meeting app installs. Audio Priority Bar users can import their saved order once.</p>
+        </div>
+        <figure>
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="images/devices-dark.jpg">
+            <img src="images/devices-light.jpg" width="1960" height="1280" loading="lazy" alt="The Devices page in Settings with outputs and microphones in two ranked lists, and a meeting app's virtual device hidden">
+          </picture>
+        </figure>
+      </div>
+
+      <div class="cards">
+        <div class="card">
+          <h3>A slider for each monitor</h3>
+          <p>Every external monitor gets its own brightness slider, and the display changes while you drag.</p>
+        </div>
+        <div class="card">
+          <h3>Volume for any output</h3>
+          <p>Monitor speakers are set over DDC/CI. Any other output, such as AirPods, uses the macOS volume.</p>
+        </div>
+        <div class="card">
+          <h3>Microphone gain and mute</h3>
+          <p>The microphone row sets input gain and mute when the device supports them. A muted device's button turns red.</p>
+        </div>
+        <div class="card">
+          <h3>Alerts follow the output</h3>
+          <p>macOS can leave sound effects on the MacBook speakers after you switch to a monitor. Monitor Controls moves them to the output in use.</p>
+        </div>
+        <div class="card">
+          <h3>Mute the Mac's own speakers</h3>
+          <p>While another output is in use, point at the speakers' row in the panel and a mute button appears for anything that still plays there.</p>
+        </div>
+        <div class="card">
+          <h3>Updates when you ask</h3>
+          <p><strong>Check for Updates</strong> in Settings looks for a newer release only when you press it, and <strong>Install and Relaunch</strong> swaps it in.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Install</h2>
+      <ol class="steps">
+        <li><span>Download <a href="https://github.com/ars-3n/Monitor-Controls/releases/latest/download/MonitorControls.zip">MonitorControls.zip</a> and unzip it.</span></li>
+        <li><span>Move <strong>Monitor Controls.app</strong> to Applications and open it.</span></li>
+        <li><span>Click the monitor icon in the menu bar. Right-click it for Settings and Quit.</span></li>
+      </ol>
+      <p class="note">Releases aren't notarized, so the first time you open the app macOS says it can't verify it. Close the message, go to <strong>System Settings → Privacy &amp; Security</strong>, and click <strong>Open Anyway</strong> next to the line about Monitor Controls. The keys also need access under <strong>Privacy &amp; Security → Accessibility</strong>.</p>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <h2>Questions</h2>
+      <div class="faq">
+        <details>
+          <summary>Why can't my Mac change the brightness of my external monitor?</summary>
+          <p>macOS sets the brightness only of Apple's own displays and a few made for the Mac, such as the LG UltraFine. Other monitors take brightness and volume commands over DDC/CI, and macOS doesn't send them. Monitor Controls does.</p>
+        </details>
+        <details>
+          <summary>Which monitors work?</summary>
+          <p>Monitors with DDC/CI, which most desktop monitors have. Some ship with it switched off in their own menu, and some docks and adapters don't pass it through. The panel says which controls are unavailable.</p>
+        </details>
+        <details>
+          <summary>Does it run on Intel Macs?</summary>
+          <p>No. Releases are built for Apple silicon (M1 and later) and need macOS 14 or later.</p>
+        </details>
+        <details>
+          <summary>How is it different from MonitorControl?</summary>
+          <p>The display code is adapted from MonitorControl. Monitor Controls puts it in one panel with the output volume, microphone gain and automatic switching between your audio devices, which MonitorControl doesn't do. If you run both, turn off MonitorControl's key handling so one app handles each keypress.</p>
+        </details>
+        <details>
+          <summary>Is it free?</summary>
+          <p>Yes. Monitor Controls is open source under the GPL-3.0, and every release is on <a href="https://github.com/ars-3n/Monitor-Controls/releases">GitHub</a>.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Monitor Controls is free software under the <a href="https://github.com/ars-3n/Monitor-Controls/blob/main/LICENSE">GPL-3.0</a>. It includes work from Audio Priority Bar and MonitorControl; see the <a href="https://github.com/ars-3n/Monitor-Controls/blob/main/Licenses/Origins.txt">origin and license notices</a>. The source and every release are on <a href="https://github.com/ars-3n/Monitor-Controls">GitHub</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

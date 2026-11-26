@@ -51,19 +51,20 @@ private struct SettingsShortcuts: View {
     var body: some View {
         HStack(spacing: 0) {
             half("headphones", title: "Devices…") { open(.devices) }
-            Divider().frame(height: 14)
+            Divider().frame(height: 16)
             half("gearshape", title: "Settings…") { open(.general) }
                 .keyboardShortcut(",", modifiers: .command)
         }
-        .padding(.horizontal, 3)
         .shortcutsGlass()
     }
 
     private func half(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 34, height: 30)
+                // What a toolbar gives its items on macOS 26: a 20 pt symbol in a
+                // platter 36 pt high, 50 pt for each item.
+                .font(.system(size: 20))
+                .frame(width: 50, height: 36)
                 .contentShape(Rectangle())
         }
         .buttonStyle(ShortcutHalfStyle())

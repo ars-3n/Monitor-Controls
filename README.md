@@ -71,9 +71,26 @@ macOS plays sound effects on a device of their own, and it can leave them on the
 
 Coming from Desk Controls? Quit it and move it out of Applications first. Your device preferences carry over.
 
+## Questions
+
+### Why can't my Mac change the brightness of my external monitor?
+
+macOS sets the brightness only of Apple's own displays and a few made for the Mac, such as the LG UltraFine. Other monitors take brightness and volume commands over DDC/CI, and macOS doesn't send them. Monitor Controls does.
+
+### Which monitors work?
+
+Monitors with DDC/CI, which most desktop monitors have. Some ship with it switched off in their own menu, and some docks and adapters don't pass it through. The panel says which controls are unavailable.
+
+### Does it run on Intel Macs?
+
+No. Releases are built for Apple silicon (M1 and later) and need macOS 14 or later.
+
+### How is it different from MonitorControl?
+
+The display code is adapted from MonitorControl. Monitor Controls puts it in one panel with the output volume, microphone gain and automatic switching between your audio devices, which MonitorControl doesn't do.
+
 ## Good to know
 
-- Brightness and monitor volume depend on DDC/CI. Some docks and adapters don't pass it through, and some monitors have it switched off in their own menu. The panel says which controls are unavailable.
 - The keys need access in **System Settings → Privacy & Security → Accessibility**. If you also run MonitorControl, turn off its key handling so one app handles each keypress.
 - When a monitor's speakers are the active output, Settings → General shows which display the volume slider controls. Change it when two displays share a name or the output and display names differ.
 - While Monitor Controls runs, sound effects always play on the selected output. A different device chosen under **System Settings → Sound → Play sound effects through** is moved back.

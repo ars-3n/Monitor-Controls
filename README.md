@@ -114,7 +114,7 @@ swift test
 CODESIGN_IDENTITY="My Signing Certificate" ./scripts/build.sh
 ```
 
-GitHub Actions tests each push to `main` and publishes a ZIP of its last commit as a release. It signs with a certificate when the repository has the secrets `SIGNING_CERTIFICATE_P12` (a base64-encoded `.p12` with its private key) and `SIGNING_CERTIFICATE_PASSWORD`. A self-signed certificate keeps Accessibility access across updates as long as every release uses the same one.
+GitHub Actions tests each push to `main` and publishes a ZIP of its last commit as a release. A push that only changes the README, its images or `DESIGN.md` publishes nothing. It signs with a certificate when the repository has the secrets `SIGNING_CERTIFICATE_P12` (a base64-encoded `.p12` with its private key) and `SIGNING_CERTIFICATE_PASSWORD`. A self-signed certificate keeps Accessibility access across updates as long as every release uses the same one.
 
 With exactly one LG ULTRAWIDE connected, a hardware test makes small changes to brightness, volume and mute, then restores the originals:
 

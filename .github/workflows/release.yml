@@ -3,6 +3,11 @@ name: Release Monitor Controls
 on:
   push:
     branches: [main]
+    # A push that only changes these publishes nothing: the app is the same.
+    paths-ignore:
+      - README.md
+      - DESIGN.md
+      - .github/readme/**
 
 permissions:
   contents: read
